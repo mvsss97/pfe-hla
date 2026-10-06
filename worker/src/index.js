@@ -2,14 +2,8 @@
  * PFE Hard-Label NLP — Telegram Bot Webhook (Cloudflare Worker)
  *
  * Ce worker reçoit les updates Telegram via webhook et répond aux commandes.
- * Il lit les données du dashboard depuis le site statique Cloudflare Pages.
- * Le state (chat_id autorisé) est stocké dans Cloudflare KV.
- *
- * Variables d'environnement (secrets Cloudflare) :
- *   TELEGRAM_BOT_TOKEN   — le token du bot
- *   TELEGRAM_PAIRING_CODE — code d'association unique
- *   BOT_WEBHOOK_SECRET   — secret pour vérifier l'authenticité des requêtes
- *   SITE_URL             — URL du dashboard Cloudflare Pages
+ * Il lit les données du dashboard depuis le site statique.
+ * Il stocke temporairement les actions (screening) dans Cloudflare KV.
  */
 
 // ─── Telegram API helpers ───────────────────────────────────────────────────
@@ -42,6 +36,14 @@ function answerCallback(token, callbackId, text) {
   });
 }
 
+function editMessageReplyMarkup(token, chatId, messageId, replyMarkup) {
+  return tg(token, "editMessageReplyMarkup", {
+    chat_id: chatId,
+    message_id: messageId,
+    reply_markup: replyMarkup,
+  });
+}
+
 // ─── State helpers (KV) ─────────────────────────────────────────────────────
 
 async function getAuthorizedChat(env) {
@@ -53,6 +55,13 @@ async function getAuthorizedChat(env) {
 async function setAuthorizedChat(env, chatId) {
   if (!env.PFE_STATE) return;
   await env.PFE_STATE.put("authorized_chat_id", String(chatId));
+}
+
+// Stocke la décision de l'utilisateur pour l'action GitHub
+async function saveDecision(env, paperId, action) {
+  if (!env.PFE_STATE) return;
+  const key = `decision:${paperId}`;
+  await env.PFE_STATE.put(key, JSON.stringify({ action, timestamp: Date.now() }));
 }
 
 // ─── Dashboard data fetch ───────────────────────────────────────────────────
@@ -77,39 +86,34 @@ async function handleStart(env, chatId, text) {
 
   if (existingChat) {
     if (existingChat === chatId) {
-      await sendMessage(token, chatId,
-        "✅ Tu es déjà associé. Utilise /help pour voir les commandes.");
+      await sendMessage(token, chatId, "✅ Tu es déjà associé. Utilise /help pour voir les commandes.");
     } else {
       await sendMessage(token, chatId, "⛔ Ce bot est déjà associé à un autre compte.");
     }
     return;
   }
 
-  // Try pairing
   const parts = text.trim().split(/\s+/);
   const supplied = parts.length > 1 ? parts.slice(1).join(" ") : "";
   const expected = env.TELEGRAM_PAIRING_CODE || "";
 
   if (!expected || expected.length < 8 || !supplied || supplied !== expected) {
-    await sendMessage(token, chatId,
-      "🔑 Envoie <code>/start TON_CODE</code> pour associer ce bot à ton compte.");
+    await sendMessage(token, chatId, "🔑 Envoie <code>/start TON_CODE</code> pour associer ce bot à ton compte.");
     return;
   }
 
   await setAuthorizedChat(env, chatId);
-  await sendMessage(token, chatId,
-    "✅ Appareil associé avec succès !\n\n" +
-    "Supprime maintenant le message avec le code.\n" +
-    "Utilise /help pour voir les commandes disponibles.");
+  await sendMessage(token, chatId, "✅ Appareil associé avec succès !\n\nSupprime maintenant le message avec le code.\nUtilise /help pour voir les commandes disponibles.");
 }
 
 async function handleHelp(env, chatId) {
   await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId,
     "📚 <b>Commandes disponibles</b>\n\n" +
     "/today — résumé du jour\n" +
-    "/papers — articles en attente de screening\n" +
+    "/papers — articles en attente de screening (interactif)\n" +
     "/stats — compteurs PRISMA\n" +
     "/words — mots d'anglais du jour\n" +
+    "/learn — apprendre NLP, Math, et Hard-Label Attacks\n" +
     "/search <i>terme</i> — chercher dans les articles\n" +
     "/site — lien vers le dashboard\n" +
     "/help — cette aide");
@@ -117,7 +121,7 @@ async function handleHelp(env, chatId) {
 
 async function handleToday(env, chatId) {
   const token = env.TELEGRAM_BOT_TOKEN;
-  const state = await fetchDashboardState(env.SITE_URL || "https://pfe-hla.pages.dev");
+  const state = await fetchDashboardState(env.SITE_URL || "https://mvsss97.github.io/pfe-hla/");
 
   if (!state) {
     await sendMessage(token, chatId, "⚠️ Impossible de charger les données du dashboard.");
@@ -134,148 +138,111 @@ async function handleToday(env, chatId) {
   text += `🔍 À screener : <b>${pending}</b>\n`;
   text += `✅ Inclus : <b>${included}</b>\n`;
   if (p.identified !== undefined) text += `📥 Identifiés (PRISMA) : <b>${p.identified}</b>\n`;
-  if (p.duplicates_removed !== undefined) text += `🔄 Doublons retirés : <b>${p.duplicates_removed}</b>\n`;
 
-  const experiments = state.experiments || [];
-  if (experiments.length > 0) {
-    text += `\n🧪 Expériences : <b>${experiments.length}</b>\n`;
-  }
-
-  text += `\n🌐 <a href="${env.SITE_URL || "https://pfe-hla.pages.dev"}">Voir le dashboard</a>`;
-
+  text += `\n🌐 <a href="${env.SITE_URL || "https://mvsss97.github.io/pfe-hla/"}">Voir le dashboard</a>`;
   await sendMessage(token, chatId, text);
 }
 
 async function handlePapers(env, chatId) {
   const token = env.TELEGRAM_BOT_TOKEN;
-  const state = await fetchDashboardState(env.SITE_URL || "https://pfe-hla.pages.dev");
+  const state = await fetchDashboardState(env.SITE_URL || "https://mvsss97.github.io/pfe-hla/");
 
   if (!state) {
     await sendMessage(token, chatId, "⚠️ Données indisponibles.");
     return;
   }
 
-  const pending = (state.papers || [])
-    .filter(p => p.status === "identified")
-    .slice(0, 10);
+  const pending = (state.papers || []).filter(p => p.status === "identified");
 
   if (pending.length === 0) {
     await sendMessage(token, chatId, "🎉 Aucun article en attente de screening !");
     return;
   }
 
-  let text = `📄 <b>${pending.length} articles à screener</b> (10 premiers) :\n\n`;
-  for (const p of pending) {
+  // Envoie les 3 premiers avec des boutons interactifs
+  const toSend = pending.slice(0, 3);
+  await sendMessage(token, chatId, `📄 <b>${pending.length} articles en attente.</b> Voici les prochains :`);
+
+  for (const p of toSend) {
     const year = p.year || "?";
-    const title = (p.title || "Sans titre").slice(0, 80);
-    text += `• [${year}] ${escapeHtml(title)}\n`;
-  }
-  text += `\n🌐 <a href="${env.SITE_URL || "https://pfe-hla.pages.dev"}">Screener sur le dashboard</a>`;
+    const title = p.title || "Sans titre";
+    const abstract = (p.abstract || "Pas d'abstract").slice(0, 300) + "...";
+    const paperId = p.id;
+    
+    let text = `<b>[${year}] ${escapeHtml(title)}</b>\n\n<i>${escapeHtml(abstract)}</i>`;
+    
+    // Clavier interactif
+    const replyMarkup = {
+      inline_keyboard: [
+        [
+          { text: "✅ Accepter", callback_data: `keep:${paperId}` },
+          { text: "❌ Rejeter", callback_data: `reject:${paperId}` }
+        ]
+      ]
+    };
 
-  await sendMessage(token, chatId, text);
+    await sendMessage(token, chatId, text, { reply_markup: replyMarkup });
+  }
 }
 
-async function handleStats(env, chatId) {
+async function handleLearn(env, chatId) {
   const token = env.TELEGRAM_BOT_TOKEN;
-  const state = await fetchDashboardState(env.SITE_URL || "https://pfe-hla.pages.dev");
+  const text = "🧠 <b>Apprentissage : Hard-Label NLP</b>\n\n" +
+               "Que souhaites-tu réviser aujourd'hui ? Choisis un module :";
+  
+  const replyMarkup = {
+    inline_keyboard: [
+      [{ text: "🧮 Mathématiques (Dérivées, Gradients)", callback_data: "learn:math" }],
+      [{ text: "🗣 NLP (Transformers, Embeddings)", callback_data: "learn:nlp" }],
+      [{ text: "⚔️ Adversarial Attacks (Hard-label)", callback_data: "learn:attacks" }]
+    ]
+  };
 
-  if (!state || !state.prisma) {
-    await sendMessage(token, chatId, "⚠️ Données PRISMA indisponibles.");
-    return;
-  }
-
-  const p = state.prisma;
-  let text = "📊 <b>Compteurs PRISMA</b>\n\n";
-  text += `📥 Identifiés : ${p.identified || 0}\n`;
-  text += `🔄 Uniques : ${p.unique_records || 0}\n`;
-  text += `🗑 Doublons retirés : ${p.duplicates_removed || 0}\n`;
-  text += `🔍 Screenés : ${p.screened || 0}\n`;
-  text += `❌ Exclus (titre/abstract) : ${p.excluded_title_abstract || 0}\n`;
-  text += `📄 Rapports cherchés : ${p.reports_sought || 0}\n`;
-  text += `✅ Inclus : ${p.included || 0}\n`;
-  text += `⏳ En attente : ${p.pending_screening || 0}`;
-
-  await sendMessage(token, chatId, text);
+  await sendMessage(token, chatId, text, { reply_markup: replyMarkup });
 }
 
-async function handleWords(env, chatId) {
+// ─── Callback Handler (Interactive buttons) ─────────────────────────────────
+
+async function handleCallback(env, callback) {
   const token = env.TELEGRAM_BOT_TOKEN;
-  const state = await fetchDashboardState(env.SITE_URL || "https://pfe-hla.pages.dev");
+  const chatId = callback.message?.chat?.id;
+  const msgId = callback.message?.message_id;
+  const data = callback.data;
 
-  if (!state || !state.vocabulary || state.vocabulary.length === 0) {
-    await sendMessage(token, chatId, "📝 Pas de mots d'anglais disponibles pour le moment.");
-    return;
+  if (!chatId || !data) return;
+
+  if (data.startsWith("keep:") || data.startsWith("reject:")) {
+    const [action, paperId] = data.split(":", 2);
+    
+    // Sauvegarder dans KV pour que GitHub Actions le récupère à 19h
+    await saveDecision(env, paperId, action);
+
+    // Mettre à jour le message pour désactiver les boutons
+    await editMessageReplyMarkup(token, chatId, msgId, { inline_keyboard: [] });
+    
+    const actionText = action === "keep" ? "✅ Accepté" : "❌ Rejeté";
+    await answerCallback(token, callback.id, `${actionText}. L'action sera synchronisée ce soir.`);
+    await sendMessage(token, chatId, `${actionText} (Le dashboard sera mis à jour à 19h).`);
+  } 
+  else if (data.startsWith("learn:")) {
+    const module = data.split(":")[1];
+    let content = "";
+    if (module === "math") {
+      content = "🧮 <b>Les Gradients (Maths)</b>\n\nUn gradient est un vecteur qui indique la direction de la plus grande pente d'une fonction. En IA, on l'utilise pour ajuster les poids et minimiser l'erreur.\n\n<i>En 'Hard-Label', on ne peut pas calculer ce gradient directement, il faut l'estimer !</i>";
+    } else if (module === "nlp") {
+      content = "🗣 <b>Word Embeddings (NLP)</b>\n\nEn NLP, les mots sont convertis en vecteurs (listes de nombres). Des mots au sens proche auront des vecteurs proches. C'est ce qui permet aux modèles comme BERT de comprendre le contexte.";
+    } else if (module === "attacks") {
+      content = "⚔️ <b>Hard-Label Attacks</b>\n\nContrairement au 'Soft-Label' où on voit les probabilités (ex: 90% Chien), en 'Hard-Label' on a juste la décision finale (Chien ou Chat). Pour tromper l'IA, on doit deviner la frontière de décision à tâtons !";
+    }
+    await answerCallback(token, callback.id, "Module chargé !");
+    await sendMessage(token, chatId, content);
   }
-
-  // Pick 3 random words to review
-  const words = state.vocabulary;
-  const selected = [];
-  const used = new Set();
-  for (let i = 0; i < Math.min(3, words.length); i++) {
-    let idx;
-    do { idx = Math.floor(Math.random() * words.length); } while (used.has(idx) && used.size < words.length);
-    used.add(idx);
-    selected.push(words[idx]);
-  }
-
-  let text = "🇬🇧 <b>Mots du jour</b>\n\n";
-  for (const w of selected) {
-    text += `<b>${escapeHtml(w.term)}</b> — ${escapeHtml(w.translation || "")}\n`;
-    if (w.definition) text += `<i>${escapeHtml(w.definition)}</i>\n`;
-    if (w.synonyms) text += `Synonymes : ${escapeHtml(w.synonyms)}\n`;
-    if (w.example) text += `Ex : « ${escapeHtml(w.example)} »\n`;
-    text += "\n";
-  }
-
-  await sendMessage(token, chatId, text);
-}
-
-async function handleSearch(env, chatId, query) {
-  const token = env.TELEGRAM_BOT_TOKEN;
-  if (!query || query.trim().length < 2) {
-    await sendMessage(token, chatId, "🔍 Utilise : /search <i>terme</i>");
-    return;
-  }
-
-  const state = await fetchDashboardState(env.SITE_URL || "https://pfe-hla.pages.dev");
-  if (!state) {
-    await sendMessage(token, chatId, "⚠️ Données indisponibles.");
-    return;
-  }
-
-  const q = query.toLowerCase().trim();
-  const matches = (state.papers || []).filter(p => {
-    const title = (p.title || "").toLowerCase();
-    const abstract = (p.abstract || "").toLowerCase();
-    return title.includes(q) || abstract.includes(q);
-  }).slice(0, 8);
-
-  if (matches.length === 0) {
-    await sendMessage(token, chatId, `🔍 Aucun résultat pour « ${escapeHtml(query)} ».`);
-    return;
-  }
-
-  let text = `🔍 <b>${matches.length} résultat(s) pour « ${escapeHtml(query)} »</b>\n\n`;
-  for (const p of matches) {
-    text += `• [${p.year || "?"}] ${escapeHtml((p.title || "").slice(0, 80))} — <i>${escapeHtml(p.status || "?")}</i>\n`;
-  }
-
-  await sendMessage(token, chatId, text);
-}
-
-async function handleSite(env, chatId) {
-  const url = env.SITE_URL || "https://pfe-hla.pages.dev";
-  await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId,
-    `🌐 <a href="${url}">Ouvrir le dashboard PFE</a>`);
 }
 
 // ─── Utility ────────────────────────────────────────────────────────────────
 
 function escapeHtml(text) {
-  return String(text)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 // ─── Main handler ───────────────────────────────────────────────────────────
@@ -291,9 +258,28 @@ export default {
       });
     }
 
-    // Webhook endpoint
+    // Endpoint privé pour GitHub Actions (récupérer les décisions)
+    if (url.pathname === "/sync-decisions" && request.method === "GET") {
+      const secret = url.searchParams.get("secret");
+      if (secret !== env.TELEGRAM_PAIRING_CODE) return new Response("Unauthorized", { status: 403 });
+
+      const decisions = {};
+      if (env.PFE_STATE) {
+        const list = await env.PFE_STATE.list({ prefix: "decision:" });
+        for (const key of list.keys) {
+          const val = await env.PFE_STATE.get(key.name);
+          decisions[key.name.replace("decision:", "")] = JSON.parse(val);
+          // Effacer la décision de la file d'attente
+          await env.PFE_STATE.delete(key.name);
+        }
+      }
+      return new Response(JSON.stringify(decisions), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Webhook Telegram
     if (url.pathname === "/webhook" && request.method === "POST") {
-      // Verify secret token header
       const secretHeader = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
       if (env.BOT_WEBHOOK_SECRET && secretHeader !== env.BOT_WEBHOOK_SECRET) {
         return new Response("Unauthorized", { status: 403 });
@@ -306,22 +292,19 @@ export default {
         console.error("Error processing update:", err);
       }
 
-      // Always return 200 to Telegram
       return new Response("OK", { status: 200 });
     }
 
-    // Setup webhook (one-time, call manually)
+    // Setup webhook
     if (url.pathname === "/setup" && request.method === "GET") {
       const token = env.TELEGRAM_BOT_TOKEN;
       if (!token) return new Response("No token configured", { status: 500 });
-
       const workerUrl = `${url.origin}/webhook`;
       const result = await tg(token, "setWebhook", {
         url: workerUrl,
         secret_token: env.BOT_WEBHOOK_SECRET || "",
         allowed_updates: ["message", "callback_query"],
       });
-
       return new Response(JSON.stringify({ ok: true, webhook: workerUrl, result }), {
         headers: { "Content-Type": "application/json" },
       });
@@ -335,60 +318,39 @@ async function processUpdate(env, update) {
   const token = env.TELEGRAM_BOT_TOKEN;
   if (!token) return;
 
-  // Handle messages
-  const message = update.message;
-  if (message) {
-    const chatId = message.chat.id;
-    const text = message.text || "";
-    const chatType = message.chat.type;
+  if (update.message && update.message.chat.type === "private") {
+    const chatId = update.message.chat.id;
+    const text = update.message.text || "";
 
-    // Only handle private messages
-    if (chatType !== "private") return;
-
-    // Check authorization
-    const authorizedChat = await getAuthorizedChat(env);
-
-    // /start is always handled (for pairing)
     if (text.startsWith("/start")) {
       await handleStart(env, chatId, text);
       return;
     }
 
-    // All other commands require authorization
+    const authorizedChat = await getAuthorizedChat(env);
     if (authorizedChat === null || authorizedChat !== chatId) {
-      await sendMessage(token, chatId,
-        "🔒 Non autorisé. Utilise /start <i>code</i> pour t'associer.");
+      await sendMessage(token, chatId, "🔒 Non autorisé. Utilise /start <i>code</i> pour t'associer.");
       return;
     }
 
-    // Route commands
     const cmd = text.split(/\s+/)[0].toLowerCase().replace(/@\w+$/, "");
-    const args = text.slice(cmd.length).trim();
-
     switch (cmd) {
       case "/help": await handleHelp(env, chatId); break;
       case "/today": await handleToday(env, chatId); break;
       case "/papers": await handlePapers(env, chatId); break;
-      case "/stats": await handleStats(env, chatId); break;
-      case "/words": await handleWords(env, chatId); break;
-      case "/search": await handleSearch(env, chatId, args); break;
-      case "/site": await handleSite(env, chatId); break;
-      default:
-        await sendMessage(token, chatId,
-          "🤔 Commande inconnue. Utilise /help pour voir les commandes.");
+      case "/learn": await handleLearn(env, chatId); break;
+      default: break;
     }
     return;
   }
 
-  // Handle callback queries (for future interactive buttons)
-  const callback = update.callback_query;
-  if (callback) {
-    const chatId = callback.message?.chat?.id;
+  if (update.callback_query) {
+    const chatId = update.callback_query.message?.chat?.id;
     const authorizedChat = await getAuthorizedChat(env);
     if (!chatId || authorizedChat !== chatId) {
-      await answerCallback(token, callback.id, "Non autorisé");
+      await answerCallback(token, update.callback_query.id, "Non autorisé");
       return;
     }
-    await answerCallback(token, callback.id, "Action reçue ✅");
+    await handleCallback(env, update.callback_query);
   }
 }

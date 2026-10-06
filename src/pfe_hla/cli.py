@@ -684,6 +684,9 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--output", default="site/data/state.json")
     export.set_defaults(func=command_export)
 
+    sync = sub.add_parser("sync-decisions", help="pull screening decisions from Telegram bot")
+    sync.set_defaults(func=lambda args: __import__('pfe_hla.sync_decisions', fromlist=['']).run_sync_decisions())
+
     fetch_pdf = sub.add_parser("fetch-pdf", help="download and extract one recorded PDF")
     fetch_pdf.add_argument("paper_id", type=int)
     fetch_pdf.set_defaults(func=command_fetch_pdf)

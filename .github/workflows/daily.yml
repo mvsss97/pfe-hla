@@ -10,19 +10,25 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 concurrency:
-  group: daily
+  group: pages
   cancel-in-progress: false
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     env:
       OPENALEX_EMAIL: ${{ secrets.OPENALEX_EMAIL }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_ALLOWED_CHAT_ID: ${{ secrets.TELEGRAM_ALLOWED_CHAT_ID }}
-      PFE_SITE_URL: "https://pfe-hla.pages.dev"
+      # Add URL so digest points here
+      PFE_SITE_URL: "https://mvsss97.github.io/pfe-hla/"
     steps:
       - uses: actions/checkout@v4
 
@@ -39,6 +45,13 @@ jobs:
           path: data/pfe_hla.db
           key: research-db-${{ github.run_id }}
           restore-keys: research-db-
+
+      # Fetch decisions from Telegram Bot (Cloudflare KV)
+      - name: Fetch and apply manual screening decisions
+        run: python -m pfe_hla sync-decisions || true
+        env:
+          WORKER_URL: "https://pfe-hla-bot.massiresacko97.workers.dev"
+          WORKER_SECRET: ${{ secrets.TELEGRAM_PAIRING_CODE }}
 
       - name: Initialize curated data
         run: python -m pfe_hla init --seed
@@ -57,10 +70,10 @@ jobs:
         if: ${{ env.TELEGRAM_BOT_TOKEN != '' && env.TELEGRAM_ALLOWED_CHAT_ID != '' }}
         run: python -m pfe_hla digest --read-only
 
-      # Deploy to Cloudflare Pages
-      - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+      # Deploy to GitHub Pages
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy site --project-name=pfe-hla --branch=master
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
