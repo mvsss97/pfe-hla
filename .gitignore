@@ -1,0 +1,29 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local data and generated artifacts
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.sqlite*
+data/raw/
+data/pdfs/
+artifacts/
+site/data/state.json
+
+# Tooling / OS
+.tools/
+.idea/
+.DS_Store
+Thumbs.db
+

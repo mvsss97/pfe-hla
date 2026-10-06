@@ -1,0 +1,96 @@
+"""Scientific core for query-limited hard-label text attacks."""
+
+from .attack import (
+    AttackConstraints,
+    AttackMetrics,
+    AttackResult,
+    GreedyHardLabelAttack,
+    Substitution,
+    greedy_attack,
+)
+from .benchmark import (
+    BenchmarkConfig,
+    BenchmarkExample,
+    BenchmarkReport,
+    BenchmarkRunner,
+    ExampleBenchmarkResult,
+    MethodAggregate,
+    MethodRun,
+    SubstitutionFactory,
+    read_examples_jsonl,
+    run_jsonl_benchmark,
+    write_report_jsonl,
+)
+from .demo import (
+    DEFAULT_SUBSTITUTIONS,
+    LexiconHardLabelModel,
+    MappingSubstitutions,
+    make_demo_oracle,
+    run_demo,
+)
+from .hf_adapter import (
+    HuggingFaceAdapterError,
+    HuggingFaceHardLabelModel,
+    OptionalMLDependencyError,
+)
+from .oracle import (
+    BudgetedOracle,
+    HardLabelModel,
+    HardLabelProtocolError,
+    Label,
+    QueryBudgetExceeded,
+    QueryStats,
+)
+from .tokenization import Tokenizer, WhitespaceTokenizer
+from .wir import (
+    SubstitutionProvider,
+    TokenImportance,
+    WIRMethod,
+    deletion_wir,
+    masking_wir,
+    neighborhood_voting_wir,
+    rank_tokens,
+)
+
+__all__ = [
+    "AttackConstraints",
+    "AttackMetrics",
+    "AttackResult",
+    "BenchmarkConfig",
+    "BenchmarkExample",
+    "BenchmarkReport",
+    "BenchmarkRunner",
+    "BudgetedOracle",
+    "DEFAULT_SUBSTITUTIONS",
+    "GreedyHardLabelAttack",
+    "HardLabelModel",
+    "HardLabelProtocolError",
+    "HuggingFaceAdapterError",
+    "HuggingFaceHardLabelModel",
+    "Label",
+    "LexiconHardLabelModel",
+    "MappingSubstitutions",
+    "MethodAggregate",
+    "MethodRun",
+    "ExampleBenchmarkResult",
+    "OptionalMLDependencyError",
+    "QueryBudgetExceeded",
+    "QueryStats",
+    "Substitution",
+    "SubstitutionFactory",
+    "SubstitutionProvider",
+    "TokenImportance",
+    "Tokenizer",
+    "WIRMethod",
+    "WhitespaceTokenizer",
+    "deletion_wir",
+    "greedy_attack",
+    "make_demo_oracle",
+    "masking_wir",
+    "neighborhood_voting_wir",
+    "rank_tokens",
+    "read_examples_jsonl",
+    "run_demo",
+    "run_jsonl_benchmark",
+    "write_report_jsonl",
+]

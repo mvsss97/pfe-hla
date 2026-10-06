@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="description" content="Carnet de recherche local pour un PFE sur les attaques adversariales hard-label en NLP.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <title>Cockpit · HardLabel Lab</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23090d18'/%3E%3Cpath d='M8 8v16M24 8v16M8 16h16' stroke='%237de3ff' stroke-width='3' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%23ffcc66'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Aller au contenu</a>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Navigation principale">
+      <a class="brand" href="#cockpit" data-route="cockpit" aria-label="HardLabel Lab, accueil">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span><strong>HardLabel</strong><small>research lab · local</small></span>
+      </a>
+
+      <nav class="primary-nav">
+        <a href="#cockpit" data-route="cockpit" aria-current="page"><span>01</span>Cockpit</a>
+        <a href="#bibliotheque" data-route="bibliotheque"><span>02</span>Bibliothèque</a>
+        <a href="#prisma" data-route="prisma"><span>03</span>PRISMA</a>
+        <a href="#taxonomie" data-route="taxonomie"><span>04</span>Taxonomie</a>
+        <a href="#experiences" data-route="experiences"><span>05</span>Expériences WIR</a>
+        <a href="#english" data-route="english"><span>06</span>English Lab</a>
+        <a href="#guide" data-route="guide"><span>07</span>Guide</a>
+      </nav>
+
+      <div class="sidebar-foot">
+        <p><i aria-hidden="true"></i><span id="data-mode">Données sur cet appareil</span></p>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Passer au thème clair">
+          <span aria-hidden="true">◐</span><span>Clair / sombre</span>
+        </button>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div>
+          <p class="topbar-kicker">PFE · NLP × sécurité</p>
+          <p id="view-label">Cockpit</p>
+        </div>
+        <div class="topbar-actions">
+          <span class="date-chip" id="current-date">Aujourd’hui</span>
+          <button class="icon-button mobile-theme" type="button" id="mobile-theme" aria-label="Changer de thème">◐</button>
+        </div>
+      </header>
+
+      <noscript>
+        <p class="notice danger">JavaScript est nécessaire pour la navigation, les filtres et les rappels locaux. Aucun script externe n’est chargé.</p>
+      </noscript>
+
+      <main id="main-content" tabindex="-1">
+        <section class="view" id="cockpit" data-view="cockpit" aria-labelledby="cockpit-title">
+          <div class="page-intro cockpit-intro">
+            <div>
+              <p class="eyebrow"><span></span>Mini-projet · semestre 1</p>
+              <h1 id="cockpit-title">Transformer une question difficile en preuves vérifiables.</h1>
+              <p>Votre terrain : évaluer le classement d’importance des mots quand le modèle ne renvoie qu’une étiquette, sans score, logit ni gradient.</p>
+            </div>
+            <div class="scope-seal" aria-label="Périmètre : accès hard-label uniquement">
+              <span>Accès oracle</span>
+              <strong>label only</strong>
+              <small>f(x) → y</small>
+            </div>
+          </div>
+
+          <div class="truth-banner" id="cockpit-truth" role="note">
+            <span class="truth-icon" aria-hidden="true">0</span>
+            <p><strong>Point de départ honnête.</strong> La veille est amorcée par des références candidates, mais aucune étude n’est encore incluse et aucune expérience n’a été exécutée.</p>
+          </div>
+
+          <div class="metric-grid" aria-label="État du projet">
+            <article class="metric-card"><span>Articles analysés</span><strong id="cockpit-analysed">0</strong><small>fiches vérifiées uniquement</small></article>
+            <article class="metric-card"><span>Études PRISMA</span><strong id="cockpit-included">0</strong><small>incluses après éligibilité</small></article>
+            <article class="metric-card"><span>Runs WIR</span><strong id="cockpit-runs">0</strong><small id="cockpit-runs-note">protocole non exécuté</small></article>
+            <article class="metric-card accent"><span>Mots à réviser</span><strong id="cockpit-due">—</strong><small>session locale de 5 mots</small></article>
+          </div>
+
+          <div class="sync-strip" id="snapshot-health" role="status" aria-label="Santé du snapshot">
+            <div><span>Dernière synchro</span><strong id="sync-time">Snapshot non chargé</strong></div>
+            <div id="search-health"><span>Collecte</span><strong id="search-health-text">Aucun journal disponible</strong></div>
+            <div><span>Preuves vérifiées</span><strong id="evidence-health">Aucune donnée</strong></div>
+          </div>
+
+          <div class="dashboard-grid">
+            <article class="panel next-action">
+              <div class="panel-head">
+                <div><p class="overline">Prochaine preuve</p><h2>Verrouiller le protocole de recherche</h2></div>
+                <span class="status amber">À faire</span>
+              </div>
+              <p>Avant de collecter des articles, consignez les bases, la requête, la période et les critères d’inclusion. Cela rendra le diagramme PRISMA défendable.</p>
+              <ol class="compact-steps">
+                <li><span>1</span><div><b>Question</b><small>WIR hard-label, efficacité sous budget de requêtes</small></div></li>
+                <li><span>2</span><div><b>Sources</b><small>ACL Anthology, IEEE Xplore, Scopus, arXiv en complément</small></div></li>
+                <li><span>3</span><div><b>Critères</b><small>attaque textuelle, décision seule, évaluation empirique</small></div></li>
+              </ol>
+              <button class="primary-button" type="button" data-go="prisma">Ouvrir le protocole PRISMA</button>
+            </article>
+
+            <article class="panel definition-card">
+              <p class="overline">Question formalisée</p>
+              <h2>Le cœur du PFE</h2>
+              <div class="formula" aria-label="Trouver x prime qui minimise la distance sous contraintes">
+                <span>min</span> d(x, x′)
+                <small>sous f(x′) ≠ f(x) et sim(x, x′) ≥ τ</small>
+              </div>
+              <dl class="mini-defs">
+                <div><dt>Observable</dt><dd>classe prédite uniquement</dd></div>
+                <div><dt>À préserver</dt><dd>sens, grammaire, lisibilité</dd></div>
+                <div><dt>À réduire</dt><dd>requêtes et perturbations</dd></div>
+              </dl>
+            </article>
+          </div>
+
+          <article class="panel roadmap-panel">
+            <div class="panel-head">
+              <div><p class="overline">Cahier des charges</p><h2>Route du mini-projet au mémoire</h2></div>
+              <span class="status blue">8 mois</span>
+            </div>
+            <div class="roadmap" aria-label="Feuille de route sur huit mois">
+              <section class="road-phase active">
+                <span class="phase-number">01</span><div><small>Mois 1–2</small><h3>État de l’art + taxonomie</h3><p>Revue systématique, menaces, WIR, filtres, recherche et contraintes.</p></div>
+              </section>
+              <section class="road-phase">
+                <span class="phase-number">02</span><div><small>Mois 3</small><h3>Formalisation + baseline</h3><p>Définir et implémenter des heuristiques WIR sans score.</p></div>
+              </section>
+              <section class="road-phase">
+                <span class="phase-number">03</span><div><small>Mois 4</small><h3>Comparaison empirique</h3><p>Comparer qualité du classement, ASR et coût en requêtes.</p></div>
+              </section>
+              <section class="road-phase future">
+                <span class="phase-number">04</span><div><small>Mois 5–8</small><h3>Optimiser, évaluer, rédiger</h3><p>Gates, heuristiques, benchmark complet, mémoire et soutenance.</p></div>
+              </section>
+            </div>
+          </article>
+        </section>
+
+        <section class="view" id="bibliotheque" data-view="bibliotheque" aria-labelledby="library-title" hidden>
+          <div class="page-intro slim">
+            <div><p class="eyebrow"><span></span>Corpus de départ</p><h1 id="library-title">Bibliothèque</h1><p>Quelques pistes de démonstration sont disponibles en fallback partiel. « Seed » signifie amorçage manuel, pas inclusion scientifique.</p></div>
+            <div class="page-count"><strong id="library-count">6</strong><span>références visibles</span></div>
+          </div>
+
+          <div class="filter-bar" aria-label="Filtres de la bibliothèque">
+            <label class="search-field"><span>Rechercher</span><input id="library-search" type="search" placeholder="Titre, auteur, méthode…" autocomplete="off"></label>
+            <label><span>Accès</span><select id="access-filter"><option value="all">Tous</option><option value="hard">Hard-label</option><option value="score">Score-based</option><option value="unknown">À vérifier</option></select></label>
+            <label><span>Composant</span><select id="component-filter"><option value="all">Tous</option><option value="wir">WIR</option><option value="search">Recherche</option><option value="candidates">Substitutions</option></select></label>
+            <label><span>Suivi</span><select id="saved-filter"><option value="all">Tous</option><option value="seed">Seeds non triés</option><option value="saved">À lire</option></select></label>
+          </div>
+
+          <div class="seed-note" role="note"><b>Fallback partiel · seed ≠ résultat PRISMA.</b> Ces cartes de démonstration servent à construire les mots-clés et au snowballing. Elles ne représentent pas tout le corpus seed et n’entrent dans le flux qu’après traçage de leur provenance.</div>
+
+          <div class="paper-grid" id="paper-grid">
+            <article class="paper-card priority" data-paper data-id="maheshwary-2021" data-access="hard" data-component="search wir" data-search="generating natural language attacks hard label black box maheshwary pudi décision population optimisation">
+              <div class="paper-top"><span class="status cyan">Seed prioritaire</span><span>AAAI · 2021</span></div>
+              <h2>Generating Natural Language Attacks in a Hard Label Black Box Setting</h2>
+              <p class="authors">R. Maheshwary, S. Maheshwary, V. Pudi</p>
+              <p>Référence directement alignée : attaque décisionnelle observant seulement le label supérieur, avec optimisation basée population.</p>
+              <div class="tag-row"><span>hard-label</span><span>population</span><span>requêtes</span></div>
+              <div class="card-actions"><a href="https://ojs.aaai.org/index.php/AAAI/article/view/17595" target="_blank" rel="noopener noreferrer">Source primaire</a><button class="save-paper" type="button" aria-pressed="false">＋ À lire</button></div>
+            </article>
+
+            <article class="paper-card" data-paper data-id="jin-2020" data-access="score" data-component="wir candidates" data-search="textfooler jin adversarial natural language word importance ranking synonym score">
+              <div class="paper-top"><span class="status neutral">Seed comparatif</span><span>AAAI · 2020</span></div>
+              <h2>Is BERT Really Robust? A Strong Baseline for Natural Language Attack</h2>
+              <p class="authors">D. Jin et al.</p>
+              <p>Baseline utile pour dissocier le WIR guidé par scores de la variante strictement hard-label à concevoir.</p>
+              <div class="tag-row"><span>WIR</span><span>synonymes</span><span>baseline</span></div>
+              <div class="card-actions"><a href="https://ojs.aaai.org/index.php/AAAI/article/view/6311" target="_blank" rel="noopener noreferrer">Source primaire</a><button class="save-paper" type="button" aria-pressed="false">＋ À lire</button></div>
+            </article>
+
+            <article class="paper-card" data-paper data-id="garg-2020" data-access="score" data-component="wir candidates" data-search="bae bert based adversarial examples garg ramakrishnan masked language model contextual substitution">
+              <div class="paper-top"><span class="status neutral">Seed comparatif</span><span>EMNLP · 2020</span></div>
+              <h2>BAE: BERT-based Adversarial Examples for Text Classification</h2>
+              <p class="authors">S. Garg, G. Ramakrishnan</p>
+              <p>Génération contextuelle de remplacements et insertions via BERT-MLM ; utile pour le module candidat.</p>
+              <div class="tag-row"><span>MLM</span><span>candidats</span><span>cohérence</span></div>
+              <div class="card-actions"><a href="https://aclanthology.org/2020.emnlp-main.498/" target="_blank" rel="noopener noreferrer">ACL Anthology</a><button class="save-paper" type="button" aria-pressed="false">＋ À lire</button></div>
+            </article>
+
+            <article class="paper-card" data-paper data-id="li-2019" data-access="score" data-component="wir candidates" data-search="textbugger li black box adversarial text character word importance score">
+              <div class="paper-top"><span class="status neutral">Seed comparatif</span><span>NDSS · 2019</span></div>
+              <h2>TextBugger: Generating Adversarial Text Against Real-world Applications</h2>
+              <p class="authors">J. Li et al.</p>
+              <p>Perturbations caractère et mot en boîte noire ; à classifier précisément selon l’information utilisée par la variante étudiée.</p>
+              <div class="tag-row"><span>hybride</span><span>caractère</span><span>mot</span></div>
+              <div class="card-actions"><a href="https://www.ndss-symposium.org/ndss-paper/textbugger-generating-adversarial-text-against-real-world-applications/" target="_blank" rel="noopener noreferrer">Source primaire</a><button class="save-paper" type="button" aria-pressed="false">＋ À lire</button></div>
+            </article>
+
+            <article class="paper-card" data-paper data-id="alzanzot-2018" data-access="score" data-component="search candidates" data-search="generating natural language adversarial examples alzantot genetic algorithm population synonym">
+              <div class="paper-top"><span class="status neutral">Seed comparatif</span><span>IJCAI · 2018</span></div>
+              <h2>Generating Natural Language Adversarial Examples</h2>
+              <p class="authors">M. Alzantot et al.</p>
+              <p>Recherche génétique sur substitutions lexicales ; point d’appui pour comparer coût, population et espace de recherche.</p>
+              <div class="tag-row"><span>génétique</span><span>recherche</span><span>synonymes</span></div>
+              <div class="card-actions"><a href="https://www.ijcai.org/proceedings/2018/543" target="_blank" rel="noopener noreferrer">Source primaire</a><button class="save-paper" type="button" aria-pressed="false">＋ À lire</button></div>
+            </article>
+
+            <article class="paper-card" data-paper data-id="zang-2020" data-access="score" data-component="search candidates" data-search="word level textual adversarial attacking combinatorial optimization zang sememe pso particle swarm">
+              <div class="paper-top"><span class="status neutral">Seed comparatif</span><span>ACL · 2020</span></div>
+              <h2>Word-level Textual Adversarial Attacking as Combinatorial Optimization</h2>
+              <p class="authors">Y. Zang et al.</p>
+              <p>Substitutions par sémèmes et recherche PSO ; pertinent pour la taxonomie des espaces candidats et heuristiques.</p>
+              <div class="tag-row"><span>PSO</span><span>sémèmes</span><span>recherche</span></div>
+              <div class="card-actions"><a href="https://aclanthology.org/2020.acl-main.540/" target="_blank" rel="noopener noreferrer">ACL Anthology</a><button class="save-paper" type="button" aria-pressed="false">＋ À lire</button></div>
+            </article>
+          </div>
+          <div class="empty-state" id="library-empty" hidden><span>∅</span><h2>Aucune référence ne correspond</h2><p>Élargissez un filtre ou effacez la recherche.</p></div>
+        </section>
+
+        <section class="view" id="prisma" data-view="prisma" aria-labelledby="prisma-title" hidden>
+          <div class="page-intro slim">
+            <div><p class="eyebrow"><span></span>Traçabilité de la revue</p><h1 id="prisma-title">PRISMA 2020</h1><p id="prisma-intro">Fallback local partiel à zéro. Les cartes seed de démonstration restent hors flux jusqu’à une recherche documentée.</p></div>
+            <span class="status amber large" id="prisma-status">Snapshot en attente</span>
+          </div>
+
+          <div class="prisma-layout">
+            <article class="panel prisma-board" aria-labelledby="flow-title">
+              <div class="panel-head"><div><p class="overline">Diagramme vivant</p><h2 id="flow-title">Flux de sélection</h2></div><span class="seed-badge" id="prisma-corpus-badge"><b>démo</b> fallback seed partiel</span></div>
+              <div class="prisma-flow" aria-live="polite">
+                <div class="flow-card"><span>Identification</span><strong data-prisma-output="identified">0</strong><small>références trouvées</small></div>
+                <div class="flow-connector"><span data-prisma-output="duplicates">0</span><small>doublons retirés</small></div>
+                <div class="flow-card"><span>Criblage</span><strong data-prisma-output="screened">0</strong><small>titres / résumés</small></div>
+                <div class="flow-connector"><span data-prisma-output="excluded">0</span><small>exclues au tri</small></div>
+                <div class="flow-card"><span>Récupération</span><strong data-prisma-output="reportsSought">0</strong><small>rapports recherchés</small></div>
+                <div class="flow-connector"><span data-prisma-output="reportsNotRetrieved">0</span><small>non récupérés</small></div>
+                <div class="flow-card"><span>Éligibilité</span><strong data-prisma-output="assessed">0</strong><small>textes intégraux évalués</small></div>
+                <div class="flow-connector"><span data-prisma-output="fullExcluded">0</span><small>textes exclus</small></div>
+                <div class="flow-card final"><span>Inclusion</span><strong data-prisma-output="included">0</strong><small>études retenues</small></div>
+              </div>
+              <p class="validation-message" id="prisma-validation" role="status">État initial cohérent : tous les compteurs sont à zéro.</p>
+            </article>
+
+            <article class="panel prisma-form" id="prisma-source">
+              <div class="panel-head"><div><p class="overline">Autorité des données</p><h2>Snapshot automatique</h2></div><span class="status cyan">Lecture seule</span></div>
+              <dl class="snapshot-list">
+                <div><dt>Identifiées</dt><dd data-prisma-output="identified">0</dd></div>
+                <div><dt>Doublons retirés</dt><dd data-prisma-output="duplicates">0</dd></div>
+                <div><dt>Références uniques</dt><dd data-prisma-output="uniqueRecords">0</dd></div>
+                <div><dt>En attente de tri</dt><dd data-prisma-output="pendingScreening">0</dd></div>
+                <div><dt>Rapports recherchés</dt><dd data-prisma-output="reportsSought">0</dd></div>
+                <div><dt>Rapports non récupérés</dt><dd data-prisma-output="reportsNotRetrieved">0</dd></div>
+                <div><dt>Décisions en attente</dt><dd data-prisma-output="pendingDecision">0</dd></div>
+              </dl>
+              <p class="microcopy">Ces nombres viennent de <code>data/state.json</code>, lui-même généré depuis la base du projet. Ils ne sont pas modifiables dans cette page.</p>
+            </article>
+          </div>
+
+          <article class="panel protocol-card">
+            <div class="panel-head"><div><p class="overline">À compléter avant la collecte</p><h2>Protocole minimal</h2></div><span class="status amber">Brouillon</span></div>
+            <div class="protocol-grid">
+              <div><span>RQ1</span><p>Quelles heuristiques WIR fonctionnent avec la seule décision du classifieur ?</p></div>
+              <div><span>Population</span><p>Articles proposant ou évaluant des attaques adversariales textuelles en boîte noire.</p></div>
+              <div><span>Inclusion</span><p>Texte intégral, protocole empirique, métriques d’attaque et information oracle identifiable.</p></div>
+              <div><span>Exclusion</span><p>Vision uniquement, défense sans attaque évaluée, score requis sans adaptation hard-label.</p></div>
+              <div class="wide"><span>Requête de départ</span><code>("hard-label" OR "decision-based") AND ("adversarial attack") AND (NLP OR text) AND (ranking OR "word importance")</code></div>
+            </div>
+          </article>
+        </section>
+
+        <section class="view" id="taxonomie" data-view="taxonomie" aria-labelledby="taxonomy-title" hidden>
+          <div class="page-intro slim">
+            <div><p class="eyebrow"><span></span>Carte conceptuelle</p><h1 id="taxonomy-title">Taxonomie d’une attaque hard-label</h1><p>Décomposer l’attaque évite de comparer des systèmes complets sans savoir quel module produit le gain.</p></div>
+          </div>
+
+          <div class="pipeline" aria-label="Pipeline d'une attaque adversariale textuelle">
+            <article><span>01</span><b>Oracle</b><small>label discret</small></article><i aria-hidden="true"></i>
+            <article><span>02</span><b>WIR</b><small>prioriser les tokens</small></article><i aria-hidden="true"></i>
+            <article><span>03</span><b>Candidats</b><small>proposer x′</small></article><i aria-hidden="true"></i>
+            <article><span>04</span><b>Gates</b><small>filtrer tôt</small></article><i aria-hidden="true"></i>
+            <article><span>05</span><b>Recherche</b><small>explorer sous budget</small></article><i aria-hidden="true"></i>
+            <article><span>06</span><b>Validité</b><small>sens + lisibilité</small></article>
+          </div>
+
+          <div class="taxonomy-grid">
+            <article class="taxonomy-card featured"><div class="taxonomy-index">A</div><h2>Word Importance Ranking</h2><p>Estimer quels tokens influencent la décision sans observer une variation de probabilité.</p><ul><li>suppression ou masque : flip / no flip</li><li>vote dans un voisinage de perturbations</li><li>fréquence de bascule par position</li></ul><span class="research-gap">Gap du mini-projet</span></article>
+            <article class="taxonomy-card"><div class="taxonomy-index">B</div><h2>Espace de substitution</h2><p>Construire des candidats plausibles avant toute requête coûteuse.</p><ul><li>embeddings contre-ajustés</li><li>BERT masked language model</li><li>sémèmes, POS et lexicalité</li></ul></article>
+            <article class="taxonomy-card"><div class="taxonomy-index">C</div><h2>Gates et filtres</h2><p>Écarter les candidats invalides sans interroger l’oracle.</p><ul><li>part-of-speech compatible</li><li>similarité sémantique ≥ τ</li><li>grammaire et perplexité</li></ul></article>
+            <article class="taxonomy-card"><div class="taxonomy-index">D</div><h2>Recherche heuristique</h2><p>Trouver un label différent dans un espace discret combinatoire.</p><ul><li>gloutonne et beam search</li><li>algorithme génétique / PSO</li><li>MCTS ou échantillonnage local</li></ul></article>
+            <article class="taxonomy-card"><div class="taxonomy-index">E</div><h2>Contraintes de qualité</h2><p>Une bascule de label n’est pas suffisante si le texte devient faux ou artificiel.</p><ul><li>distance d’édition / taux modifié</li><li>similarité de phrase</li><li>évaluation humaine ciblée</li></ul></article>
+            <article class="taxonomy-card"><div class="taxonomy-index">F</div><h2>Budget et menace</h2><p>Déclarer exactement ce que l’attaquant sait, voit et peut demander.</p><ul><li>nombre maximal de requêtes</li><li>attaque ciblée ou non ciblée</li><li>données ou modèle substitut accessibles</li></ul></article>
+          </div>
+
+          <article class="panel comparison-panel">
+            <div class="panel-head"><div><p class="overline">Matrice de lecture</p><h2>Ne pas confondre les cadres</h2></div></div>
+            <div class="table-wrap"><table><thead><tr><th>Cadre</th><th>Retour oracle</th><th>Signal pour le WIR</th><th>Risque méthodologique</th></tr></thead><tbody>
+              <tr class="focus-row"><th>Hard-label</th><td>classe seulement</td><td>bascule, stabilité, votes</td><td>variance + coût en requêtes</td></tr>
+              <tr><th>Score-based</th><td>probabilités / logits</td><td>variation continue du score</td><td>baseline injuste si transposée telle quelle</td></tr>
+              <tr><th>White-box</th><td>gradients + paramètres</td><td>salience par gradient</td><td>hypothèse hors périmètre</td></tr>
+            </tbody></table></div>
+          </article>
+        </section>
+
+        <section class="view" id="experiences" data-view="experiences" aria-labelledby="experiments-title" hidden>
+          <div class="page-intro slim">
+            <div><p class="eyebrow" id="experiment-kicker"><span></span>Banc d’essai · non exécuté</p><h1 id="experiments-title">Expériences WIR</h1><p id="experiments-summary">Préparer une comparaison reproductible avant de lancer le moindre calcul.</p></div>
+            <span class="status neutral large" id="experiment-count-badge">0 run</span>
+          </div>
+
+          <div class="truth-banner compact" role="note"><span class="truth-icon" aria-hidden="true">!</span><p id="experiment-truth"><strong>Aucun résultat.</strong> Les tirets du tableau sont volontaires. Cette page produit un plan de configuration, pas une expérience.</p></div>
+
+          <div class="experiment-layout">
+            <form class="panel experiment-form" id="experiment-form">
+              <div class="panel-head"><div><p class="overline">Configuration v0.1</p><h2>Planifier un benchmark</h2></div><span class="status amber">Draft</span></div>
+              <label>Dataset<select name="dataset"><option>SST-2</option><option>IMDB</option><option>AG News</option></select></label>
+              <label>Modèle cible<select name="model"><option>bert-base-uncased fine-tuné</option><option>roberta-base fine-tuné</option><option>distilbert-base-uncased fine-tuné</option></select></label>
+              <div class="split-fields"><label>Budget / exemple<input name="budget" type="number" min="1" value="200"></label><label>Seed aléatoire<input name="seed" type="number" min="0" value="42"></label></div>
+              <fieldset><legend>Heuristiques à comparer</legend>
+                <label class="check"><input name="methods" type="checkbox" value="leave-one-out deletion" checked><span>Leave-one-out par suppression</span></label>
+                <label class="check"><input name="methods" type="checkbox" value="mask flip" checked><span>Masquage : flip / no flip</span></label>
+                <label class="check"><input name="methods" type="checkbox" value="neighborhood voting" checked><span>Vote dans le voisinage local</span></label>
+                <label class="check"><input name="methods" type="checkbox" value="random ordering"><span>Ordre aléatoire (contrôle)</span></label>
+              </fieldset>
+              <button class="primary-button" type="submit">Générer le plan</button>
+              <p class="microcopy">Le plan porte explicitement le statut <code>non_executé</code>.</p>
+            </form>
+
+            <article class="panel protocol-output">
+              <div class="panel-head"><div><p class="overline">Artifact reproductible</p><h2>Plan généré</h2></div><button class="text-button" type="button" id="copy-protocol" disabled>Copier</button></div>
+              <pre id="protocol-json" tabindex="0" aria-label="Configuration JSON">Sélectionnez les paramètres puis générez le plan.</pre>
+              <div class="guardrails"><h3>Invariant hard-label</h3><ul><li>la fonction oracle retourne uniquement un identifiant de classe ;</li><li>aucun tri n’utilise softmax, logit ou gradient ;</li><li>chaque appel est compté, cache inclus dans le rapport.</li></ul></div>
+            </article>
+          </div>
+
+          <article class="panel results-panel">
+            <div class="panel-head"><div><p class="overline">Tableau de résultats</p><h2 id="results-title">Résultats futurs</h2></div><span class="status neutral" id="results-status">En attente d’exécution</span></div>
+            <div class="table-wrap"><table><thead><tr><th>Méthode WIR</th><th>ASR ↑</th><th>Requêtes ↓</th><th>Tokens modifiés ↓</th><th>Similarité ↑</th><th>Statut</th></tr></thead><tbody id="results-body">
+              <tr><th>Suppression LOO</th><td>—</td><td>—</td><td>—</td><td>—</td><td><span class="status neutral">Non lancé</span></td></tr>
+              <tr><th>Masquage label-flip</th><td>—</td><td>—</td><td>—</td><td>—</td><td><span class="status neutral">Non lancé</span></td></tr>
+              <tr><th>Vote voisinage</th><td>—</td><td>—</td><td>—</td><td>—</td><td><span class="status neutral">Non lancé</span></td></tr>
+              <tr><th>Ordre aléatoire</th><td>—</td><td>—</td><td>—</td><td>—</td><td><span class="status neutral">Non lancé</span></td></tr>
+            </tbody></table></div>
+          </article>
+        </section>
+
+        <section class="view" id="english" data-view="english" aria-labelledby="english-title" hidden>
+          <div class="page-intro slim">
+            <div><p class="eyebrow"><span></span>5 mots · 6 minutes</p><h1 id="english-title">English Lab</h1><p>Vocabulaire scientifique du PFE, révisé par rappel actif et répétition espacée sur cet appareil.</p></div>
+            <div class="streak-card"><strong id="due-count">—</strong><span>mots dus</span></div>
+          </div>
+
+          <div class="english-stats">
+            <div><span>Session</span><strong><b id="session-progress">0</b> / 5</strong></div>
+            <div><span>En mémoire</span><strong id="learned-count">0</strong></div>
+            <div><span>Prochaine échéance</span><strong id="next-review">Aujourd’hui</strong></div>
+          </div>
+
+          <div class="seed-note" role="note"><b>Progression locale.</b> Les notes SM-2 effectuées ici restent sur cet appareil et ne sont pas synchronisées avec Telegram ou la base SQLite.</div>
+
+          <div class="english-layout">
+            <article class="flashcard-panel" id="flashcard-panel" aria-live="polite">
+              <div class="flashcard-top"><span class="status cyan">Quiz de rappel</span><span id="card-position">1 / 5</span></div>
+              <div class="flashcard" id="flashcard">
+                <p class="word-type" id="word-type">noun</p>
+                <h2 id="word-term">query budget</h2>
+                <p class="prompt">Dites la définition française à voix haute, puis révélez la réponse.</p>
+                <div class="answer" id="word-answer" hidden>
+                  <p><span>FR</span><strong id="word-fr">budget de requêtes</strong></p>
+                  <p><span>Syn.</span><span id="word-synonyms">query limit · request allowance</span></p>
+                  <blockquote id="word-example">The attack must stay within a strict query budget.</blockquote>
+                </div>
+              </div>
+              <button class="primary-button reveal-button" type="button" id="reveal-answer">Révéler la réponse <kbd>Espace</kbd></button>
+              <div class="grade-row" id="grade-row" hidden aria-label="Évaluer votre rappel">
+                <button type="button" data-grade="again"><kbd>1</kbd><span>Oublié</span><small>demain</small></button>
+                <button type="button" data-grade="hard"><kbd>2</kbd><span>Difficile</span><small>bientôt</small></button>
+                <button type="button" data-grade="good"><kbd>3</kbd><span>Bien</span><small>espacé</small></button>
+                <button type="button" data-grade="easy"><kbd>4</kbd><span>Facile</span><small>plus tard</small></button>
+              </div>
+              <div class="session-done" id="session-done" hidden><span>✓</span><h2>Session terminée</h2><p>Vos prochaines dates sont enregistrées sur cet appareil.</p><button class="primary-button" type="button" id="restart-session">Revoir 5 mots</button></div>
+            </article>
+
+            <aside class="panel vocab-side">
+              <div class="panel-head"><div><p class="overline">File de révision</p><h2>Lexique du domaine</h2></div></div>
+              <ol id="vocab-list" class="vocab-list"></ol>
+              <button class="text-button danger-text" type="button" id="reset-vocab">Réinitialiser ma progression</button>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="guide" data-view="guide" aria-labelledby="guide-title" hidden>
+          <div class="page-intro slim">
+            <div><p class="eyebrow"><span></span>Mode opératoire</p><h1 id="guide-title">Guide de travail</h1><p>Une boucle courte : chercher, tracer, lire, coder, mesurer, écrire.</p></div>
+          </div>
+
+          <div class="guide-grid">
+            <article class="panel guide-steps">
+              <p class="overline">Chaque semaine</p><h2>La boucle scientifique</h2>
+              <ol>
+                <li><span>01</span><div><h3>Formuler</h3><p>Une question précise et un critère de succès mesurable.</p></div></li>
+                <li><span>02</span><div><h3>Tracer</h3><p>Requête, date, base et décision PRISMA avec raison d’exclusion.</p></div></li>
+                <li><span>03</span><div><h3>Extraire</h3><p>Cadre de menace, oracle, datasets, métriques, budget et limites.</p></div></li>
+                <li><span>04</span><div><h3>Reproduire</h3><p>Baseline minimale, seed, versions, configuration et journal brut.</p></div></li>
+                <li><span>05</span><div><h3>Interpréter</h3><p>Séparer mesure, inférence et hypothèse ; documenter les échecs.</p></div></li>
+              </ol>
+            </article>
+
+            <article class="panel weekly-card">
+              <p class="overline">Rythme conseillé</p><h2>Une semaine réaliste</h2>
+              <div class="week-row"><span>Lun</span><p>recherche + dédoublonnage</p><b>45 min</b></div>
+              <div class="week-row"><span>Mar</span><p>lecture profonde d’un article</p><b>60 min</b></div>
+              <div class="week-row"><span>Mer</span><p>fiche + taxonomie + 5 mots</p><b>45 min</b></div>
+              <div class="week-row"><span>Jeu</span><p>implémentation ou test isolé</p><b>90 min</b></div>
+              <div class="week-row"><span>Ven</span><p>synthèse, risques, questions encadreur</p><b>30 min</b></div>
+            </article>
+
+            <article class="panel telegram-card">
+              <div class="panel-head"><div><p class="overline">Compagnon mobile</p><h2>Bot Telegram</h2></div><span class="status amber">À sécuriser</span></div>
+              <p>Le bot peut devenir une télécommande pour les rappels, jamais un lieu où exposer des secrets ou fabriquer des résultats.</p>
+              <div class="security-callout"><strong>Action indispensable</strong><p>Le jeton partagé précédemment doit être révoqué dans BotFather puis remplacé. Ce site n’enregistre et n’utilise aucun token.</p></div>
+              <ul class="command-list"><li><code>/start [CODE]</code><span>initialiser ou associer le bot</span></li><li><code>/help</code><span>afficher l’aide disponible</span></li><li><code>/today</code><span>prochaine tâche et mots dus</span></li><li><code>/more</code><span>afficher la suite d’un message</span></li><li><code>/papers</code><span>afficher les références à traiter</span></li><li><code>/search &lt;mots&gt;</code><span>chercher avec des mots-clés</span></li><li><code>/words</code><span>lancer les mots du jour</span></li><li><code>/stats</code><span>voir l’état du travail</span></li><li><code>/site</code><span>ouvrir le carnet web</span></li></ul>
+              <a class="primary-button link-button" href="https://t.me/Monpfebot" target="_blank" rel="noopener noreferrer">Ouvrir Monpfebot</a>
+              <p class="microcopy">Le lien ouvre seulement le profil public du bot. Les commandes nécessitent un backend sécurisé, non inclus dans cette version statique.</p>
+            </article>
+
+            <article class="panel checklist-card">
+              <p class="overline">Avant toute conclusion</p><h2>Checklist anti-surinterprétation</h2>
+              <ul class="checklist"><li><span>✓</span>Le cadre est-il strictement label-only ?</li><li><span>✓</span>Chaque requête est-elle comptée de la même façon ?</li><li><span>✓</span>La qualité textuelle dépasse-t-elle une seule similarité automatique ?</li><li><span>✓</span>Les seeds et runs sont-ils identiques entre méthodes ?</li><li><span>✓</span>Les échecs et limites figurent-ils dans le rapport ?</li></ul>
+            </article>
+          </div>
+
+          <article class="panel shortcuts-card">
+            <div><p class="overline">Navigation</p><h2>Raccourcis clavier</h2></div>
+            <p><kbd>Alt</kbd> + <kbd>1…7</kbd> changer d’espace</p><p><kbd>Ctrl</kbd> + <kbd>K</kbd> rechercher dans la bibliothèque</p><p><kbd>Espace</kbd> révéler une carte d’anglais</p><p><kbd>1…4</kbd> noter le rappel</p>
+          </article>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

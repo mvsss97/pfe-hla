@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pfe-hla-assistant"
+version = "0.1.0"
+description = "Reproducible hard-label adversarial NLP mini-project and research companion"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "PFE student" }]
+dependencies = [
+  "certifi>=2025.1.31",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "ruff>=0.9,<1",
+]
+review = [
+  "pymupdf>=1.25,<2",
+]
+ml = [
+  "torch>=2.5,<3",
+  "transformers>=4.48,<6",
+]
+evaluation = [
+  "datasets>=3.2,<5",
+  "sentence-transformers>=3.3,<6",
+]
+
+[project.scripts]
+pfe-hla = "pfe_hla.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pfe_hla"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

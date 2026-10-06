@@ -1,0 +1,9 @@
+{"id":"smoke-01","text":"This movie is good and surprisingly thoughtful","label":"POSITIVE"}
+{"id":"smoke-02","text":"The story is charming with a strong ending","label":"POSITIVE"}
+{"id":"smoke-03","text":"A delightful film with excellent performances","label":"POSITIVE"}
+{"id":"smoke-04","text":"The direction is smart and the acting is convincing","label":"POSITIVE"}
+{"id":"smoke-05","text":"This movie is bad and painfully predictable","label":"NEGATIVE"}
+{"id":"smoke-06","text":"The plot is dull with a weak ending","label":"NEGATIVE"}
+{"id":"smoke-07","text":"A tedious film with awful performances","label":"NEGATIVE"}
+{"id":"smoke-08","text":"The direction is poor and the acting is unconvincing","label":"NEGATIVE"}
+
