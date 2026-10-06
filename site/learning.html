@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <title>Apprentissage IA & NLP - PFE Companion</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .module-card { margin-bottom: 2rem; border-left: 4px solid var(--pico-primary); padding-left: 1rem; }
+    .math-formula { font-family: monospace; background: var(--pico-card-background-color); padding: 0.5rem; border-radius: 4px; display: inline-block; }
+  </style>
+</head>
+<body>
+  <nav class="container-fluid">
+    <ul>
+      <li><strong>📚 Apprentissage PFE</strong></li>
+    </ul>
+    <ul>
+      <li><a href="index.html">← Retour au Dashboard</a></li>
+    </ul>
+  </nav>
+
+  <main class="container">
+    <header>
+      <hgroup>
+        <h1>Parcours d'Apprentissage</h1>
+        <p>De zéro absolu jusqu'aux Attaques Adversarielles Hard-Label en NLP.</p>
+      </hgroup>
+    </header>
+
+    <section id="module1" class="module-card">
+      <h2>Module 1 : Les bases (Maths & Machine Learning)</h2>
+      <p>Avant de comprendre l'IA, il faut comprendre comment la machine "apprend".</p>
+      <ul>
+        <li><strong>Vecteurs et Matrices (Algèbre linéaire) :</strong> Les mots dans le NLP ne sont pas stockés comme du texte, mais comme des listes de nombres (vecteurs). Exemple : <code>Chat = [0.2, 0.8, -0.1]</code>.</li>
+        <li><strong>Probabilités :</strong> L'IA ne sait jamais rien à 100%. Elle prédit : "Il y a 95% de chances que ce texte soit positif".</li>
+        <li><strong>Fonction de coût (Loss Function) :</strong> C'est la note que l'on donne à l'IA quand elle s'entraîne. Si elle se trompe, la note (le coût) est élevée. Le but de l'apprentissage est de trouver comment réduire ce coût.</li>
+      </ul>
+    </section>
+
+    <section id="module2" class="module-card">
+      <h2>Module 2 : C'est quoi le NLP ?</h2>
+      <p>Le <strong>Traitement du Langage Naturel (NLP)</strong> est la branche de l'IA qui permet aux machines de comprendre le texte.</p>
+      <ul>
+        <li><strong>Tokenisation :</strong> Découper une phrase en petits morceaux (mots ou sous-mots appelés "tokens").</li>
+        <li><strong>Embeddings :</strong> Transformer chaque token en vecteur mathématique pour que des mots au sens proche (ex: "Roi" et "Reine") soient proches géométriquement dans l'espace.</li>
+        <li><strong>Classification :</strong> L'une des tâches de base du NLP. Par exemple, dire si un tweet est un spam ou non.</li>
+      </ul>
+    </section>
+
+    <section id="module3" class="module-card">
+      <h2>Module 3 : Les Attaques Adversarielles (Le cœur de ton PFE)</h2>
+      <p>Une attaque adversarielle consiste à piéger l'IA en modifiant très légèrement le texte d'entrée, de façon à ce que l'humain ne voie pas la différence, mais que l'IA se trompe complètement.</p>
+      <ul>
+        <li><strong>White-Box vs Black-Box :</strong>
+          <ul>
+            <li><em>White-Box :</em> L'attaquant a accès à tout le code et aux mathématiques internes de l'IA.</li>
+            <li><em>Black-Box :</em> L'attaquant n'a accès qu'à l'entrée (le texte) et à la sortie (la prédiction), sans voir l'intérieur.</li>
+          </ul>
+        </li>
+        <li><strong>Le "Hard-Label" :</strong> C'est le niveau le plus difficile (ton sujet !). Dans une attaque Black-Box classique, l'IA renvoie "Positif (99%)". En <em>Hard-Label</em>, l'IA renvoie juste "Positif", sans le pourcentage de confiance. C'est très dur pour l'attaquant de savoir si ses modifications rapprochent l'IA de l'erreur.</li>
+      </ul>
+    </section>
+
+    <section id="module4" class="module-card">
+      <h2>Module 4 : Comment attaquer en Hard-Label ?</h2>
+      <p>Puisqu'on n'a pas les probabilités, on doit chercher des mots à remplacer (substitution de synonymes) en envoyant plein de requêtes à l'IA pour voir quand la décision bascule.</p>
+      <ul>
+        <li><strong>WIR (Word Importance Ranking) :</strong> Une méthode qui cherche quels mots sont les plus importants dans la phrase en les effaçant un par un et en regardant si la prédiction change.</li>
+        <li><strong>Recherche heuristique (ex: Algorithmes génétiques) :</strong> Tester des centaines de combinaisons de synonymes pour trouver celle qui trompe le modèle.</li>
+      </ul>
+    </section>
+
+    <hr>
+    <footer>
+      <p><em>Ton bot Telegram t'enverra bientôt des quizz quotidiens sur ces notions pour t'aider à les mémoriser.</em></p>
+    </footer>
+  </main>
+</body>
+</html>
