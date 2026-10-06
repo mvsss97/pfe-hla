@@ -9,6 +9,6 @@ SITE_URL = "https://pfe-hla.pages.dev"
 # KV namespace for state (chat_id, words, etc.)
 # Created via: wrangler kv namespace create PFE_STATE
 # Then paste the id below
-# [[kv_namespaces]]
-# binding = "PFE_STATE"
-# id = "your-namespace-id-here"
+[[kv_namespaces]]
+binding = "PFE_STATE"
+id = "3f642efa5e364d08ae56481e993399d4"

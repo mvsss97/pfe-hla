@@ -10,23 +10,19 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: daily
   cancel-in-progress: false
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     env:
       OPENALEX_EMAIL: ${{ secrets.OPENALEX_EMAIL }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_ALLOWED_CHAT_ID: ${{ secrets.TELEGRAM_ALLOWED_CHAT_ID }}
+      PFE_SITE_URL: "https://pfe-hla.pages.dev"
     steps:
       - uses: actions/checkout@v4
 
@@ -61,10 +57,10 @@ jobs:
         if: ${{ env.TELEGRAM_BOT_TOKEN != '' && env.TELEGRAM_ALLOWED_CHAT_ID != '' }}
         run: python -m pfe_hla digest --read-only
 
-      # Deploy to GitHub Pages
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      # Deploy to Cloudflare Pages
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
         with:
-          path: site
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy site --project-name=pfe-hla --branch=master
