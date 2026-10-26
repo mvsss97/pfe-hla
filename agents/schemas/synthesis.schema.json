@@ -1,0 +1,73 @@
+{
+  "type": "object",
+  "properties": {
+    "vue_ensemble": {"type": "string"},
+    "comparatif": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {"type": "string"},
+          "acces": {"type": "string"},
+          "wir": {"type": "string"},
+          "candidats": {"type": "string"},
+          "recherche": {"type": "string"},
+          "datasets": {"type": "string"},
+          "modeles": {"type": "string"},
+          "budget": {"type": "string"},
+          "resultat_principal": {"type": "string"},
+          "comparabilite": {"type": "string"}
+        },
+        "required": [
+          "key", "acces", "wir", "candidats", "recherche", "datasets",
+          "modeles", "budget", "resultat_principal", "comparabilite"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "etat_de_lart": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "titre": {"type": "string"},
+          "paragraphe": {"type": "string"},
+          "cles": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["titre", "paragraphe", "cles"],
+        "additionalProperties": false
+      }
+    },
+    "incoherences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {"type": "string"},
+          "cles": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["description", "cles"],
+        "additionalProperties": false
+      }
+    },
+    "lacunes_pistes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "piste": {"type": "string"},
+          "justification": {"type": "string"},
+          "cles": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["piste", "justification", "cles"],
+        "additionalProperties": false
+      }
+    },
+    "prochaines_etapes": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": [
+    "vue_ensemble", "comparatif", "etat_de_lart", "incoherences",
+    "lacunes_pistes", "prochaines_etapes"
+  ],
+  "additionalProperties": false
+}

@@ -1,34 +1,48 @@
 name: daily research companion
 
+# The research agents live here: twice a day GitHub wakes up, applies the
+# Telegram decisions, collects papers, lets the AI agents (Gemini, free key)
+# pre-screen / read / compare them, publishes the site and tells the bot.
+
 on:
   workflow_dispatch:
   push:
     branches: [master]
   schedule:
-    # 19:00 in Africa/Algiers (UTC+1)
-    - cron: "0 18 * * *"
+    # ~06:17 and ~15:47 in Africa/Algiers (UTC+1). Odd minutes avoid the
+    # top-of-the-hour congestion that delayed the old 18:00 run by hours.
+    - cron: "17 5 * * *"
+    - cron: "47 14 * * *"
 
 permissions:
-  contents: read
-  pages: write
+  contents: write # encrypted database backup branch
+  pages: write # GitHub Pages mirror
   id-token: write
+  actions: write # keep the schedule alive (GitHub disables it after 60 idle days)
 
 concurrency:
-  group: pages
+  group: daily
   cancel-in-progress: false
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 80
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     env:
       OPENALEX_EMAIL: ${{ secrets.OPENALEX_EMAIL }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_ALLOWED_CHAT_ID: ${{ secrets.TELEGRAM_ALLOWED_CHAT_ID }}
-      # Add URL so digest points here
-      PFE_SITE_URL: "https://mvsss97.github.io/pfe-hla/"
+      PFE_SITE_URL: "https://pfe-hla.pages.dev"
+      WORKER_URL: "https://pfe-hla-bot.massiresacko97.workers.dev"
+      # The pairing code is already shared by GitHub and the worker.
+      PIPELINE_SECRET: ${{ secrets.PIPELINE_SECRET || secrets.TELEGRAM_PAIRING_CODE }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      AGENT_BACKEND: ${{ vars.AGENT_BACKEND || 'auto' }}
+      AGENT_MODEL: ${{ vars.AGENT_MODEL }}
+      DB_BACKUP_PASSPHRASE: ${{ secrets.DB_BACKUP_PASSPHRASE }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
 
@@ -37,43 +51,130 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - run: python -m pip install -e .
+      - run: python -m pip install -e ".[review]"
+
+      - name: Mark the run start
+        id: start
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" >> "$GITHUB_OUTPUT"
 
       - name: Restore the research database
-        uses: actions/cache@v4
+        id: dbcache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            data/pfe_hla.db
+            data/raw
+          key: research-v2-${{ github.run_id }}
+          restore-keys: research-v2-
+
+      - name: Restore the database cached by the previous workflow
+        if: steps.dbcache.outputs.cache-matched-key == ''
+        id: legacycache
+        uses: actions/cache/restore@v4
         with:
           path: data/pfe_hla.db
           key: research-db-${{ github.run_id }}
           restore-keys: research-db-
 
-      # Fetch decisions from Telegram Bot (Cloudflare KV)
-      - name: Fetch and apply manual screening decisions
-        run: python -m pfe_hla sync-decisions || true
-        env:
-          WORKER_URL: "https://pfe-hla-bot.massiresacko97.workers.dev"
-          WORKER_SECRET: ${{ secrets.TELEGRAM_PAIRING_CODE }}
+      - name: Restore the encrypted backup when no cache is left
+        if: steps.dbcache.outputs.cache-matched-key == '' && steps.legacycache.outputs.cache-matched-key == '' && env.DB_BACKUP_PASSPHRASE != ''
+        run: |
+          if git fetch --depth=1 origin research-db; then
+            git show origin/research-db:pfe_hla.db.enc > /tmp/pfe_hla.db.enc
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+              -in /tmp/pfe_hla.db.enc -out data/pfe_hla.db -pass env:DB_BACKUP_PASSPHRASE
+            echo "Database restored from the encrypted research-db branch."
+          else
+            echo "No backup yet: starting from the curated seed."
+          fi
 
-      - name: Initialize curated data
+      - name: Initialize curated data (and migrate the schema)
         run: python -m pfe_hla init --seed
 
-      - name: Collect scholarly metadata
+      - name: Apply Telegram decisions
+        run: python -m pfe_hla sync-decisions
+
+      - name: Freeze the review protocol v1 (provisional until the supervisor validates it)
         continue-on-error: true
-        run: python -m pfe_hla collect --limit 20 --run-kind watch
+        run: |
+          python -m pfe_hla protocol-freeze v1 --note "Provisoire, à valider par l'encadrant"
+
+      - name: Formal PRISMA search (each protocol query runs once)
+        continue-on-error: true
+        run: python -m pfe_hla collect --run-kind review --limit 100 --max-records 100
+
+      - name: Daily watch (newest papers)
+        continue-on-error: true
+        run: python -m pfe_hla collect --limit 25 --run-kind watch
 
       - name: Deduplicate
         run: python -m pfe_hla dedupe --apply || true
 
-      - name: Export the public dashboard state
+      - name: Carry early triage into formal screening
+        run: python -m pfe_hla carry-triage
+
+      - name: Fetch PDFs for the reading queue
+        run: python -m pfe_hla fetch-queue --limit 3 --auto-queue 5
+
+      - name: AI agents — sort, read, compare
+        # Not on every code push: the free Gemini quota is kept for the schedule.
+        if: github.event_name != 'push'
+        timeout-minutes: 45
+        continue-on-error: true
+        run: python -m pfe_hla agents --max-screen 50 --max-read 3
+
+      - name: Export the dashboard data
         run: python -m pfe_hla export
 
-      - name: Send the daily Telegram digest
-        if: ${{ env.TELEGRAM_BOT_TOKEN != '' && env.TELEGRAM_ALLOWED_CHAT_ID != '' }}
-        run: python -m pfe_hla digest --read-only
+      - name: Save the research database
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/pfe_hla.db
+            data/raw
+          key: research-v2-${{ github.run_id }}
 
-      # Deploy to GitHub Pages
-      - uses: actions/configure-pages@v5
+      - name: Encrypted backup to the research-db branch
+        if: env.DB_BACKUP_PASSPHRASE != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -c "import sqlite3; s=sqlite3.connect('data/pfe_hla.db'); d=sqlite3.connect('/tmp/backup.db'); s.backup(d); d.close(); s.close()"
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+            -in /tmp/backup.db -out /tmp/pfe_hla.db.enc -pass env:DB_BACKUP_PASSPHRASE
+          mkdir -p /tmp/backup && cd /tmp/backup
+          git init -q && git checkout -q -b research-db
+          cp /tmp/pfe_hla.db.enc .
+          echo "Encrypted SQLite snapshot of the PFE research database (AES-256, key in repo secrets)." > README.md
+          git -c user.name="pfe-hla-pipeline" -c user.email="actions@users.noreply.github.com" add -A
+          git -c user.name="pfe-hla-pipeline" -c user.email="actions@users.noreply.github.com" \
+            commit -q -m "Encrypted research DB snapshot $(date -u +%F)"
+          git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" research-db
+
+      - name: Acknowledge the applied Telegram decisions
+        run: python -m pfe_hla sync-ack
+
+      - name: Deploy to GitHub Pages (mirror)
+        uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
       - id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Deploy to Cloudflare Pages (main site)
+        continue-on-error: true
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy site --project-name=pfe-hla --branch=master
+
+      - name: Tell the Telegram bot what the agents did
+        run: python -m pfe_hla notify --since "${{ steps.start.outputs.at }}"
+
+      - name: Keep the schedule alive
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/daily.yml/enable"

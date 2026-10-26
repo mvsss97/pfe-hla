@@ -2,7 +2,7 @@
 
 Version initiale : 2026-10-06. Ce protocole doit être daté et figé avant le tri final. Toute modification ultérieure devra être consignée et justifiée dans une archive versionnée.
 
-**Limite actuelle :** la base relie les notices aux runs `review`, mais ne stocke pas encore le hash/version du protocole qui les gouverne, et ce dossier n'est pas encore initialisé comme dépôt Git. Jusqu'à l'ajout de ce lien, rester en mode `pilot`; avant le premier run `review`, archiver cette version, calculer son SHA-256 et faire valider la version par l'encadrant.
+**Historique de la limite :** la base relie désormais chaque run `review` à une version de protocole (`protocol_versions` : SHA-256 de ce fichier + commit Git). La version **v1** est figée automatiquement au premier passage du pipeline avec le statut **provisoire**. Elle passe à `validated` (`python -m pfe_hla protocol-status v1 validated`) après accord de l'encadrant. Toute modification de ce texte exige une nouvelle version (v2) et une nouvelle recherche documentée ; l'ancienne version n'est jamais réécrite.
 
 ## Objectif et questions de recherche
 
@@ -80,6 +80,20 @@ Pour chaque étude : menace, données, modèle, langue, objectif ciblé/non cibl
 Chaque chiffre utilisé dans un tableau reçoit : page/table, phrase ou cellule source, statut de vérification. Un résumé généré automatiquement reste « non vérifié » jusqu'à comparaison au PDF.
 
 Questions de qualité, notées 0/1 : menace définie ; budget complet ; baselines comparables ; contraintes opérationnalisées ; taille et sélection de l'échantillon ; variance/IC ; code ou détails reproductibles ; limites rapportées. Le score sert à discuter la confiance, pas à maquiller une exclusion après coup.
+
+## Mise en œuvre v1 (exécutée par le pipeline)
+
+- **Sources interrogées automatiquement :** OpenAlex et arXiv. Les autres sources minimales ci-dessus restent à importer (exports institutionnels) ; leur absence est une limite déclarée de v1.
+- **Requêtes envoyées (une exécution par requête et par source) :**
+  1. `"hard label" adversarial text attack`
+  2. `"decision based" adversarial attack NLP`
+  3. `black box adversarial text classification`
+  4. `word importance ranking adversarial text`
+- **Plafond :** les 100 premiers résultats par requête et par source, triés par pertinence (pas de pagination exhaustive en v1). L'URL exacte, la date et le nombre de réponses sont journalisés.
+- **Veille quotidienne :** des runs `watch` triés par date cherchent les nouveautés deux fois par jour. Ils restent **hors du diagramme PRISMA** tant qu'une mise à jour formelle de la recherche (run `review` d'une version ultérieure) ne les a pas retrouvés.
+- **Assistance par IA (modèle de langue Gemini) :** l'IA propose une suggestion de tri (décision, code, justification, pertinence 0–5) et rédige des fiches de lecture à partir du texte intégral. Ces sorties sont des **suggestions** : elles ne sont jamais enregistrées comme décisions de screening. Chaque décision PRISMA est prise par l'étudiant (boutons Telegram ou CLI) et journalisée avec son motif.
+- **Tri anticipé :** une décision prise pendant la veille sur le même titre/résumé est reportée au corpus formel quand la recherche v1 retrouve la notice ; la justification conserve la date d'origine.
+- **Fiches de lecture :** chaque citation ou valeur d'une fiche est recherchée mot pour mot dans le PDF (`exact_quote`, `value_only`, `not_found`). Une fiche reste un brouillon tant que l'étudiant ne l'a pas relue.
 
 ## Ce que PRISMA ne résout pas
 

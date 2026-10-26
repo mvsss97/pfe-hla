@@ -1,0 +1,137 @@
+{
+  "type": "object",
+  "properties": {
+    "resume_simple": {"type": "string"},
+    "probleme": {"type": "string"},
+    "contributions": {"type": "array", "items": {"type": "string"}},
+    "methode": {"type": "string"},
+    "acces_oracle": {
+      "type": "object",
+      "properties": {
+        "regime": {
+          "type": "string",
+          "enum": ["hard-label", "score-based", "white-box", "mixed", "not-applicable", "unknown"]
+        },
+        "justification": {"type": "string"},
+        "citation": {"type": "string"}
+      },
+      "required": ["regime", "justification", "citation"],
+      "additionalProperties": false
+    },
+    "composants": {
+      "type": "object",
+      "properties": {
+        "wir": {"type": "string"},
+        "candidats": {"type": "string"},
+        "filtres": {"type": "string"},
+        "recherche": {"type": "string"},
+        "budget_requetes": {"type": "string"}
+      },
+      "required": ["wir", "candidats", "filtres", "recherche", "budget_requetes"],
+      "additionalProperties": false
+    },
+    "evaluation": {
+      "type": "object",
+      "properties": {
+        "datasets": {"type": "array", "items": {"type": "string"}},
+        "modeles_cibles": {"type": "array", "items": {"type": "string"}},
+        "metriques": {"type": "array", "items": {"type": "string"}},
+        "baselines": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["datasets", "modeles_cibles", "metriques", "baselines"],
+      "additionalProperties": false
+    },
+    "resultats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "affirmation": {"type": "string"},
+          "valeur": {"type": "string"},
+          "citation": {"type": "string"}
+        },
+        "required": ["affirmation", "valeur", "citation"],
+        "additionalProperties": false
+      }
+    },
+    "points_forts": {"type": "array", "items": {"type": "string"}},
+    "faiblesses": {"type": "array", "items": {"type": "string"}},
+    "menaces_validite": {"type": "array", "items": {"type": "string"}},
+    "reproductibilite": {
+      "type": "object",
+      "properties": {
+        "code_disponible": {"type": ["boolean", "null"]},
+        "lien_code": {"type": "string"},
+        "commentaire": {"type": "string"}
+      },
+      "required": ["code_disponible", "lien_code", "commentaire"],
+      "additionalProperties": false
+    },
+    "limites_auteurs": {"type": "array", "items": {"type": "string"}},
+    "qualite": {
+      "type": "object",
+      "properties": {
+        "menace_definie": {"type": "integer", "minimum": 0, "maximum": 1},
+        "budget_complet": {"type": "integer", "minimum": 0, "maximum": 1},
+        "baselines_comparables": {"type": "integer", "minimum": 0, "maximum": 1},
+        "contraintes_operationnalisees": {"type": "integer", "minimum": 0, "maximum": 1},
+        "echantillon_decrit": {"type": "integer", "minimum": 0, "maximum": 1},
+        "variance_ou_ic": {"type": "integer", "minimum": 0, "maximum": 1},
+        "reproductible": {"type": "integer", "minimum": 0, "maximum": 1},
+        "limites_rapportees": {"type": "integer", "minimum": 0, "maximum": 1}
+      },
+      "required": [
+        "menace_definie", "budget_complet", "baselines_comparables",
+        "contraintes_operationnalisees", "echantillon_decrit", "variance_ou_ic",
+        "reproductible", "limites_rapportees"
+      ],
+      "additionalProperties": false
+    },
+    "eligibilite": {
+      "type": "object",
+      "properties": {
+        "suggestion": {"type": "string", "enum": ["include", "exclude", "uncertain"]},
+        "code_exclusion": {"type": ["string", "null"], "enum": ["E1", "E2", "E5", "E6", "E8", null]},
+        "justification": {"type": "string"}
+      },
+      "required": ["suggestion", "code_exclusion", "justification"],
+      "additionalProperties": false
+    },
+    "pertinence_pfe": {
+      "type": "object",
+      "properties": {
+        "score": {"type": "integer", "minimum": 0, "maximum": 5},
+        "questions": {
+          "type": "array",
+          "items": {"type": "string", "enum": ["RQ1", "RQ2", "RQ3", "RQ4", "RQ5"]}
+        },
+        "pourquoi": {"type": "string"}
+      },
+      "required": ["score", "questions", "pourquoi"],
+      "additionalProperties": false
+    },
+    "pistes_contribution": {"type": "array", "items": {"type": "string"}},
+    "phrase_etat_de_lart": {"type": "string"},
+    "vocabulaire": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "terme": {"type": "string"},
+          "traduction_fr": {"type": "string"},
+          "definition_en": {"type": "string"},
+          "exemple_en": {"type": "string"}
+        },
+        "required": ["terme", "traduction_fr", "definition_en", "exemple_en"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "resume_simple", "probleme", "contributions", "methode", "acces_oracle", "composants",
+    "evaluation", "resultats", "points_forts", "faiblesses", "menaces_validite",
+    "reproductibilite", "limites_auteurs", "qualite", "eligibilite", "pertinence_pfe",
+    "pistes_contribution", "phrase_etat_de_lart", "vocabulaire"
+  ],
+  "additionalProperties": false
+}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -56,6 +57,47 @@ def canonical_key(*, doi: str = "", arxiv_id: str = "", title: str) -> str:
     if clean_arxiv:
         return f"arxiv:{clean_arxiv}"
     return f"title:{normalize_title(title)}"
+
+
+def paper_key(canonical: str) -> str:
+    """Short, stable public key derived from a canonical key.
+
+    Telegram callback data and the static site address papers by this key, never
+    by SQLite row id, so decisions survive a rebuilt database.
+    """
+
+    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:10]  # noqa: S324
+
+
+def paper_key_index(connection: sqlite3.Connection) -> dict[str, int]:
+    """Map public keys (current and merged canonical aliases) to paper ids."""
+
+    index = {
+        paper_key(str(row["canonical_key"])): int(row["id"])
+        for row in connection.execute("SELECT id, canonical_key FROM papers")
+    }
+    for row in connection.execute(
+        "SELECT paper_id, alias_value FROM paper_aliases WHERE alias_type='canonical'"
+    ):
+        index.setdefault(paper_key(str(row["alias_value"])), int(row["paper_id"]))
+    return index
+
+
+def in_formal_review(connection: sqlite3.Connection, paper_id: int) -> bool:
+    return (
+        connection.execute(
+            """
+            SELECT 1 FROM paper_hits
+            JOIN search_runs ON search_runs.id=paper_hits.run_id
+            JOIN search_run_details ON search_run_details.run_id=search_runs.id
+            WHERE paper_hits.paper_id=? AND search_runs.status='ok'
+              AND search_run_details.run_kind='review'
+            LIMIT 1
+            """,
+            (paper_id,),
+        ).fetchone()
+        is not None
+    )
 
 
 def _strong_identifiers_conflict(

@@ -3,12 +3,19 @@ main = "src/index.js"
 compatibility_date = "2024-09-01"
 
 [vars]
-BOT_WEBHOOK_SECRET = "change-me-in-dashboard"
 SITE_URL = "https://pfe-hla.pages.dev"
 
-# KV namespace for state (chat_id, words, etc.)
-# Created via: wrangler kv namespace create PFE_STATE
-# Then paste the id below
+# Secrets (never in this file): set them with `wrangler secret put NAME`
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_PAIRING_CODE, BOT_WEBHOOK_SECRET, PIPELINE_SECRET
+
+# The bot writes first: 08:30, 13:30 and 20:00 in Africa/Algiers (UTC+1, no DST).
+[triggers]
+crons = ["30 7 * * *", "30 12 * * *", "0 19 * * *"]
+
+# KV namespace for state (chat_id, queued decisions, lesson progress, settings)
 [[kv_namespaces]]
 binding = "PFE_STATE"
 id = "3f642efa5e364d08ae56481e993399d4"
+
+[observability]
+enabled = true

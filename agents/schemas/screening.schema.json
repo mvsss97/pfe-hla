@@ -1,0 +1,34 @@
+{
+  "type": "object",
+  "properties": {
+    "suggestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {"type": "string"},
+          "decision": {"type": "string", "enum": ["include", "exclude", "uncertain"]},
+          "reason_code": {"type": ["string", "null"], "enum": ["E1", "E2", "E3", "E4", "E5", "E8", null]},
+          "access_regime": {
+            "type": "string",
+            "enum": ["hard-label", "score-based", "white-box", "mixed", "not-applicable", "unknown"]
+          },
+          "contribution_type": {
+            "type": "string",
+            "enum": ["attack", "defense", "benchmark", "survey", "analysis", "other"]
+          },
+          "relevance": {"type": "integer", "minimum": 0, "maximum": 5},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "rationale": {"type": "string"}
+        },
+        "required": [
+          "key", "decision", "reason_code", "access_regime",
+          "contribution_type", "relevance", "confidence", "rationale"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["suggestions"],
+  "additionalProperties": false
+}

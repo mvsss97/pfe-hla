@@ -130,20 +130,55 @@ def _rebuild_openalex_abstract(index: dict[str, list[int]] | None) -> str:
     return " ".join(word for _, word in sorted(positions))
 
 
-def _openalex_request_url(query: str, *, limit: int) -> str:
+def _openalex_request_url(
+    query: str,
+    *,
+    limit: int,
+    sort: str = "relevance",
+    cursor: str | None = None,
+) -> str:
     params = {
         "search": query,
         "per-page": str(min(max(limit, 1), 100)),
         "select": ",".join(OPENALEX_SELECT_FIELDS),
     }
+    if sort == "recent":
+        # Daily watch: newest works first, otherwise the same top hits return every day.
+        params["sort"] = "publication_date:desc"
+    if cursor is not None:
+        params["cursor"] = cursor
     return "https://api.openalex.org/works?" + urllib.parse.urlencode(params)
 
 
-def search_openalex(query: str, *, email: str | None = None, limit: int = 25) -> list[PaperRecord]:
+def search_openalex(
+    query: str,
+    *,
+    email: str | None = None,
+    limit: int = 25,
+    sort: str = "relevance",
+    max_records: int | None = None,
+) -> list[PaperRecord]:
+    """Fetch one page, or follow OpenAlex cursors up to ``max_records``."""
+
     # Contact information belongs in the user agent, not in the persisted/public URL.
-    url = _openalex_request_url(query, limit=limit)
     user_agent = f"PFE-HLA/0.1 ({email or 'no-contact-configured'})"
-    payload = _request_json(url, user_agent=user_agent)
+    if not max_records:
+        url = _openalex_request_url(query, limit=limit, sort=sort)
+        return _parse_openalex(_request_json(url, user_agent=user_agent))
+    records: list[PaperRecord] = []
+    cursor = "*"
+    while cursor and len(records) < max_records:
+        url = _openalex_request_url(query, limit=limit, sort=sort, cursor=cursor)
+        payload = _request_json(url, user_agent=user_agent)
+        page = _parse_openalex(payload)
+        if not page:
+            break
+        records.extend(page)
+        cursor = (payload.get("meta") or {}).get("next_cursor")
+    return records[:max_records]
+
+
+def _parse_openalex(payload: dict) -> list[PaperRecord]:
     records: list[PaperRecord] = []
     for work in payload.get("results", []):
         title = (work.get("display_name") or "").strip()
@@ -181,21 +216,59 @@ def _arxiv_expression(query: str) -> str:
     )
 
 
-def _arxiv_request_url(query: str, *, limit: int) -> str:
+def _arxiv_request_url(
+    query: str,
+    *,
+    limit: int,
+    sort: str = "relevance",
+    start: int = 0,
+) -> str:
     expression = _arxiv_expression(query)
     params = {
         "search_query": expression or f'all:"{query}"',
-        "start": "0",
+        "start": str(max(start, 0)),
         "max_results": str(min(max(limit, 1), 100)),
-        "sortBy": "relevance",
+        "sortBy": "submittedDate" if sort == "recent" else "relevance",
         "sortOrder": "descending",
     }
     return "https://export.arxiv.org/api/query?" + urllib.parse.urlencode(params)
 
 
-def search_arxiv(query: str, *, limit: int = 25) -> list[PaperRecord]:
-    url = _arxiv_request_url(query, limit=limit)
-    root = _request_xml(url, user_agent="PFE-HLA/0.1 research collector")
+def search_arxiv(
+    query: str,
+    *,
+    limit: int = 25,
+    sort: str = "relevance",
+    max_records: int | None = None,
+) -> list[PaperRecord]:
+    """Fetch one page, or page through ``start`` offsets up to ``max_records``."""
+
+    if not max_records:
+        return _parse_arxiv(
+            _request_xml(
+                _arxiv_request_url(query, limit=limit, sort=sort),
+                user_agent="PFE-HLA/0.1 research collector",
+            )
+        )
+    records: list[PaperRecord] = []
+    page_size = min(max(limit, 1), 100)
+    while len(records) < max_records:
+        if records:
+            time.sleep(ARXIV_MIN_INTERVAL_SECONDS)
+        root = _request_xml(
+            _arxiv_request_url(query, limit=page_size, sort=sort, start=len(records)),
+            user_agent="PFE-HLA/0.1 research collector",
+        )
+        page = _parse_arxiv(root)
+        if not page:
+            break
+        records.extend(page)
+        if len(page) < page_size:
+            break
+    return records[:max_records]
+
+
+def _parse_arxiv(root: ET.Element) -> list[PaperRecord]:
     atom = "{http://www.w3.org/2005/Atom}"
     arxiv = "{http://arxiv.org/schemas/atom}"
     records: list[PaperRecord] = []
@@ -240,6 +313,7 @@ def _collect_one(
     executed_query: str,
     request_url: str,
     run_kind: str,
+    protocol_version: str | None = None,
 ) -> CollectionResult:
     if run_kind == "review":
         existing_review = connection.execute(
@@ -264,10 +338,11 @@ def _collect_one(
     run_id = int(cursor.lastrowid)
     connection.execute(
         """
-        INSERT INTO search_run_details(run_id, executed_query, request_url, run_kind)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO search_run_details(
+            run_id, executed_query, request_url, run_kind, protocol_version
+        ) VALUES (?, ?, ?, ?, ?)
         """,
-        (run_id, executed_query, request_url, run_kind),
+        (run_id, executed_query, request_url, run_kind, protocol_version),
     )
     try:
         records = fetcher(query)
@@ -301,9 +376,20 @@ def collect_sources(
     sources: tuple[str, ...] = ("openalex", "arxiv"),
     limit: int = 25,
     run_kind: str = "pilot",
+    protocol_version: str | None = None,
+    max_records: int | None = None,
 ) -> Iterator[CollectionResult]:
+    """Run each query on each source and journal it.
+
+    ``watch`` runs sort by recency so the daily veille discovers new work;
+    ``max_records`` enables pagination (formal review runs) and is part of the
+    recorded query identity, so a replay with another cap is a different run.
+    """
+
     if run_kind not in {"review", "pilot", "watch"}:
         raise ValueError("run_kind must be review, pilot or watch")
+    sort = "recent" if run_kind == "watch" else "relevance"
+    pagination = f" [pagination: max {max_records}]" if max_records else ""
     last_arxiv_request_at: float | None = None
     for query in queries:
         if "openalex" in sources:
@@ -311,10 +397,17 @@ def collect_sources(
                 connection,
                 "OpenAlex",
                 query,
-                lambda value: search_openalex(value, email=openalex_email, limit=limit),
-                executed_query=query,
-                request_url=_openalex_request_url(query, limit=limit),
+                lambda value: search_openalex(
+                    value,
+                    email=openalex_email,
+                    limit=limit,
+                    sort=sort,
+                    max_records=max_records,
+                ),
+                executed_query=query + pagination,
+                request_url=_openalex_request_url(query, limit=limit, sort=sort),
                 run_kind=run_kind,
+                protocol_version=protocol_version,
             )
         if "arxiv" in sources:
             if last_arxiv_request_at is not None:
@@ -326,10 +419,13 @@ def collect_sources(
                 connection,
                 "arXiv",
                 query,
-                lambda value: search_arxiv(value, limit=limit),
-                executed_query=_arxiv_expression(query),
-                request_url=_arxiv_request_url(query, limit=limit),
+                lambda value: search_arxiv(
+                    value, limit=limit, sort=sort, max_records=max_records
+                ),
+                executed_query=_arxiv_expression(query) + pagination,
+                request_url=_arxiv_request_url(query, limit=limit, sort=sort),
                 run_kind=run_kind,
+                protocol_version=protocol_version,
             )
 
 

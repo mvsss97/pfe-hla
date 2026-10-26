@@ -8,6 +8,7 @@ import importlib.metadata
 import json
 import os
 import platform
+import subprocess
 import sys
 import time
 from dataclasses import asdict
@@ -25,10 +26,12 @@ from pfe_hla.library import (
     deduplicate_by_normalized_title,
     duplicate_title_groups,
     list_papers,
+    paper_key,
     seed_library,
     utc_now,
 )
 from pfe_hla.prisma import compute_prisma_counts
+from pfe_hla.protocol import active_protocol, freeze_protocol, require_protocol, set_protocol_status
 from pfe_hla.screening import (
     apply_screening_decision,
     record_final_decision,
@@ -85,6 +88,22 @@ def command_collect(args: argparse.Namespace) -> int:
     queries = tuple(args.query) if args.query else DEFAULT_QUERIES
     had_error = False
     with transaction(settings.database) as connection:
+        protocol_version = None
+        if args.run_kind == "review":
+            # A formal search is only meaningful against a frozen protocol text.
+            try:
+                if args.protocol:
+                    protocol_version = str(require_protocol(connection, args.protocol)["version"])
+                else:
+                    active = active_protocol(connection)
+                    if active is None:
+                        raise ValueError(
+                            "No frozen protocol; run `pfe_hla protocol-freeze v1` first"
+                        )
+                    protocol_version = str(active["version"])
+            except ValueError as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
         for result in collect_sources(
             connection,
             queries=queries,
@@ -92,6 +111,8 @@ def command_collect(args: argparse.Namespace) -> int:
             sources=tuple(args.source),
             limit=args.limit,
             run_kind=args.run_kind,
+            protocol_version=protocol_version,
+            max_records=args.max_records,
         ):
             if result.skipped:
                 state = "SKIPPED duplicate frozen query"
@@ -347,9 +368,247 @@ def command_export(args: argparse.Namespace) -> int:
     settings = _settings()
     _ensure_db(settings)
     output = Path(args.output)
+    site_url = args.site_url or settings.site_url
     with transaction(settings.database) as connection:
-        path = export_public_state(connection, output)
-    print(f"Public dashboard data written to {path}.")
+        path = export_public_state(connection, output, site_url=site_url)
+    print(f"Public dashboard data written to {path} (+ sheets.json, bot.json).")
+    return 0
+
+
+def _git_commit() -> str:
+    if os.environ.get("GITHUB_SHA"):
+        return os.environ["GITHUB_SHA"]
+    try:
+        return subprocess.run(  # noqa: S603
+            ["git", "rev-parse", "HEAD"],  # noqa: S607
+            cwd=ROOT, capture_output=True, text=True, check=True, timeout=10,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def command_protocol_freeze(args: argparse.Namespace) -> int:
+    settings = _settings()
+    _ensure_db(settings)
+    document = ROOT / args.document
+    try:
+        with transaction(settings.database) as connection:
+            row = freeze_protocol(
+                connection,
+                version=args.version,
+                document=document,
+                git_commit=_git_commit(),
+                note=args.note,
+            )
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(
+        f"Protocol {row['version']} [{row['status']}] sha256={row['sha256'][:16]}… "
+        f"commit={row['git_commit'][:10] or 'unknown'}"
+    )
+    return 0
+
+
+def command_protocol_status(args: argparse.Namespace) -> int:
+    settings = _settings()
+    _ensure_db(settings)
+    try:
+        with transaction(settings.database) as connection:
+            set_protocol_status(connection, version=args.version, status=args.status)
+    except (KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(f"Protocol {args.version} is now {args.status}.")
+    return 0
+
+
+def _worker_credentials() -> tuple[str, str] | None:
+    worker_url = os.environ.get("WORKER_URL", "").strip()
+    secret = os.environ.get("PIPELINE_SECRET", "").strip()
+    return (worker_url, secret) if worker_url and secret else None
+
+
+def command_sync_decisions(args: argparse.Namespace) -> int:
+    from pfe_hla.sync import apply_events, carry_triage_into_review, fetch_events
+
+    settings = _settings()
+    _ensure_db(settings)
+    credentials = _worker_credentials()
+    ack_path = Path(args.ack_file)
+    if credentials is None:
+        print("WORKER_URL or PIPELINE_SECRET missing: Telegram sync skipped.")
+        return 0
+    try:
+        events = fetch_events(*credentials)
+    except OSError as exc:
+        print(f"Could not reach the Telegram worker: {exc}", file=sys.stderr)
+        return 0
+    with transaction(settings.database) as connection:
+        report = apply_events(connection, events)
+        carried = carry_triage_into_review(connection)
+    for event_id, reason in report.skipped:
+        print(f"skipped {event_id}: {reason}")
+    pending = []
+    if ack_path.exists():
+        pending = json.loads(ack_path.read_text(encoding="utf-8") or "[]")
+    ack_path.parent.mkdir(parents=True, exist_ok=True)
+    ack_path.write_text(
+        json.dumps(sorted(set(pending) | set(report.processed_ids))), encoding="utf-8"
+    )
+    print(
+        f"Telegram: {len(events)} event(s); {len(report.applied)} applied, "
+        f"{len(report.triaged)} veille triage, {len(report.skipped)} skipped; "
+        f"{carried} triage decision(s) carried into formal screening."
+    )
+    return 0
+
+
+def command_sync_ack(args: argparse.Namespace) -> int:
+    from pfe_hla.sync import acknowledge_events
+
+    credentials = _worker_credentials()
+    ack_path = Path(args.ack_file)
+    if credentials is None or not ack_path.exists():
+        print("Nothing to acknowledge.")
+        return 0
+    event_ids = json.loads(ack_path.read_text(encoding="utf-8") or "[]")
+    try:
+        deleted = acknowledge_events(*credentials, event_ids)
+    except OSError as exc:
+        print(f"Acknowledgement failed (events will replay next run): {exc}", file=sys.stderr)
+        return 0
+    ack_path.unlink()
+    print(f"Acknowledged {deleted} Telegram event(s).")
+    return 0
+
+
+def command_carry_triage(_args: argparse.Namespace) -> int:
+    from pfe_hla.sync import carry_triage_into_review
+
+    settings = _settings()
+    _ensure_db(settings)
+    with transaction(settings.database) as connection:
+        carried = carry_triage_into_review(connection)
+    print(f"{carried} early triage decision(s) carried into formal screening.")
+    return 0
+
+
+def command_fetch_queue(args: argparse.Namespace) -> int:
+    from pfe_hla.reading import auto_queue_from_ai, fetch_reading_batch
+
+    settings = _settings()
+    _ensure_db(settings)
+    connection = connect(settings.database)
+    try:
+        queued = auto_queue_from_ai(connection, limit=args.auto_queue)
+        connection.commit()
+        outcomes = fetch_reading_batch(
+            connection, storage_root=settings.database.parent, limit=args.limit
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    for outcome in outcomes:
+        print(f"paper #{outcome.paper_id}: {outcome.status} {outcome.detail}".rstrip())
+    print(f"{queued} paper(s) queued from AI suggestions; {len(outcomes)} checked for PDF.")
+    return 0
+
+
+def command_agents(args: argparse.Namespace) -> int:
+    from pfe_hla.agents import (
+        AgentPlan,
+        ClaudeCodeRunner,
+        build_runner,
+        record_skip,
+        run_agents,
+    )
+
+    settings = _settings()
+    _ensure_db(settings)
+    connection = connect(settings.database)
+    try:
+        runner = build_runner(model=args.model, claude_bin=args.claude_bin)
+        if runner is None and args.force:
+            runner = ClaudeCodeRunner(binary=args.claude_bin, model=args.model or None)
+        if runner is None:
+            record_skip(
+                connection,
+                "Clé GEMINI_API_KEY absente des secrets GitHub : lancer "
+                "scripts/setup-secrets.ps1 (ou `gh secret set GEMINI_API_KEY`).",
+            )
+            print("Agents skipped: no GEMINI_API_KEY (or Claude token) configured.")
+            return 0
+        print(f"Agents backend: {type(runner).__name__}")
+        plan = AgentPlan(
+            max_screen=args.max_screen,
+            batch_size=args.batch_size,
+            max_read=args.max_read,
+            synthesis=not args.no_synthesis,
+        )
+        summary = run_agents(connection, runner, workdir=ROOT / args.workdir, plan=plan)
+        connection.commit()
+    finally:
+        connection.close()
+    print(json.dumps(summary.as_dict(), ensure_ascii=False, indent=2))
+    return 0
+
+
+def command_notify(args: argparse.Namespace) -> int:
+    from pfe_hla.sync import notify_worker
+
+    settings = _settings()
+    _ensure_db(settings)
+    credentials = _worker_credentials()
+    with transaction(settings.database) as connection:
+        since = args.since
+        new_papers = connection.execute(
+            "SELECT COUNT(*) AS n FROM papers WHERE discovered_at >= ?", (since,)
+        ).fetchone()["n"]
+        sheets = [
+            {"key": paper_key(str(row["canonical_key"])), "title": row["title"]}
+            for row in connection.execute(
+                """
+                SELECT papers.canonical_key, papers.title FROM paper_sheets
+                JOIN papers ON papers.id = paper_sheets.paper_id
+                WHERE paper_sheets.updated_at >= ? ORDER BY paper_sheets.updated_at DESC
+                """,
+                (since,),
+            )
+        ]
+        runs = connection.execute(
+            """
+            SELECT SUM(status='ok') AS ok, SUM(status='error') AS errors,
+                   SUM(status='skipped') AS skipped,
+                   MAX(CASE WHEN status='skipped' THEN detail END) AS skip_reason
+            FROM agent_runs WHERE started_at >= ?
+            """,
+            (since,),
+        ).fetchone()
+        suggestions = connection.execute(
+            "SELECT COUNT(*) AS n FROM ai_screening WHERE created_at >= ?", (since,)
+        ).fetchone()["n"]
+        synthesis = connection.execute(
+            "SELECT COUNT(*) AS n FROM synthesis WHERE created_at >= ?", (since,)
+        ).fetchone()["n"]
+        summary = {
+            "since": since,
+            "finishedAt": utc_now(),
+            "newPapers": int(new_papers),
+            "suggestions": int(suggestions),
+            "sheets": sheets,
+            "synthesis": bool(synthesis),
+            "agentErrors": int(runs["errors"] or 0),
+            "agentsSkipped": runs["skip_reason"] or "",
+            "prisma": compute_prisma_counts(connection).as_dict(),
+            "runUrl": os.environ.get("RUN_URL", ""),
+        }
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    if credentials is None:
+        print("WORKER_URL or PIPELINE_SECRET missing: no Telegram notification.")
+        return 0
+    sent = notify_worker(*credentials, summary)
+    print("Worker notified." if sent else "Worker notification failed.")
     return 0
 
 
@@ -607,7 +866,67 @@ def build_parser() -> argparse.ArgumentParser:
         default="pilot",
         help="only frozen 'review' runs feed PRISMA counts",
     )
+    collect.add_argument(
+        "--protocol", help="frozen protocol version for a review run (default: active one)"
+    )
+    collect.add_argument(
+        "--max-records",
+        type=positive_int,
+        help="paginate up to this many records per query and source (formal review runs)",
+    )
     collect.set_defaults(func=command_collect)
+
+    freeze = sub.add_parser("protocol-freeze", help="freeze the review protocol text")
+    freeze.add_argument("version")
+    freeze.add_argument("--document", default="docs/01-protocole-revue-prisma.md")
+    freeze.add_argument("--note", default="")
+    freeze.set_defaults(func=command_protocol_freeze)
+
+    protocol_status = sub.add_parser(
+        "protocol-status", help="mark a protocol as validated (supervisor) or retired"
+    )
+    protocol_status.add_argument("version")
+    protocol_status.add_argument("status", choices=("provisional", "validated", "retired"))
+    protocol_status.set_defaults(func=command_protocol_status)
+
+    sync = sub.add_parser("sync-decisions", help="apply Telegram decisions queued by the worker")
+    sync.add_argument("--ack-file", default="data/telegram-ack.json")
+    sync.set_defaults(func=command_sync_decisions)
+
+    sync_ack = sub.add_parser("sync-ack", help="acknowledge applied Telegram events")
+    sync_ack.add_argument("--ack-file", default="data/telegram-ack.json")
+    sync_ack.set_defaults(func=command_sync_ack)
+
+    carry = sub.add_parser("carry-triage", help="carry veille triage into formal screening")
+    carry.set_defaults(func=command_carry_triage)
+
+    fetch_queue = sub.add_parser("fetch-queue", help="queue AI picks and fetch their PDFs")
+    fetch_queue.add_argument("--limit", type=int, default=3)
+    fetch_queue.add_argument("--auto-queue", type=int, default=5)
+    fetch_queue.set_defaults(func=command_fetch_queue)
+
+    agents = sub.add_parser("agents", help="run the research agents (Gemini by default)")
+    agents.add_argument("--max-screen", type=int, default=50)
+    agents.add_argument("--batch-size", type=positive_int, default=25)
+    agents.add_argument("--max-read", type=int, default=3)
+    agents.add_argument("--no-synthesis", action="store_true")
+    agents.add_argument(
+        "--model",
+        default=os.environ.get("AGENT_MODEL", ""),
+        help="model id, or a comma-separated fallback chain for Gemini",
+    )
+    agents.add_argument("--claude-bin", default="claude")
+    agents.add_argument("--workdir", default="agents/work")
+    agents.add_argument(
+        "--force",
+        action="store_true",
+        help="without any key, try a locally logged-in Claude Code CLI",
+    )
+    agents.set_defaults(func=command_agents)
+
+    notify = sub.add_parser("notify", help="send the pipeline summary to the Telegram worker")
+    notify.add_argument("--since", required=True, help="ISO timestamp of the run start")
+    notify.set_defaults(func=command_notify)
 
     papers = sub.add_parser("papers", help="list papers")
     papers.add_argument("--status")
@@ -682,10 +1001,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     export = sub.add_parser("export", help="write dashboard JSON")
     export.add_argument("--output", default="site/data/state.json")
+    export.add_argument("--site-url", help="public URL used in bot links (default PFE_SITE_URL)")
     export.set_defaults(func=command_export)
-
-    sync = sub.add_parser("sync-decisions", help="pull screening decisions from Telegram bot")
-    sync.set_defaults(func=lambda args: __import__('pfe_hla.sync_decisions', fromlist=['']).run_sync_decisions())
 
     fetch_pdf = sub.add_parser("fetch-pdf", help="download and extract one recorded PDF")
     fetch_pdf.add_argument("paper_id", type=int)

@@ -1979,3 +1979,235 @@ kbd {
     display: none !important;
   }
 }
+
+/* ─── Agents IA, fiches, comparatif, rédaction (v2) ───────────────────────── */
+
+.status.danger {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--line));
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.ai-tag,
+.human-tag {
+  border-color: color-mix(in srgb, var(--violet) 45%, var(--line)) !important;
+  color: var(--violet) !important;
+}
+
+.human-tag {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--line)) !important;
+  color: var(--green) !important;
+}
+
+.agent-grid {
+  display: grid;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.agent-card h2 {
+  margin: .2rem 0 .5rem;
+}
+
+.agent-card p {
+  color: var(--muted);
+}
+
+.flowline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: flow;
+}
+
+.flowline li {
+  counter-increment: flow;
+  display: grid;
+  gap: .15rem;
+  min-width: 8.5rem;
+  flex: 1 1 8.5rem;
+  padding: .7rem .8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-strong);
+}
+
+.flowline li::before {
+  content: counter(flow, decimal-leading-zero);
+  color: var(--cyan);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: .7rem;
+}
+
+.flowline small {
+  color: var(--muted);
+}
+
+.sheet-detail {
+  margin-top: 1.2rem;
+  border-color: color-mix(in srgb, var(--cyan) 35%, var(--line));
+}
+
+.sheet-section {
+  padding: .9rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.sheet-section h3 {
+  margin: 0 0 .5rem;
+  font-size: 1rem;
+}
+
+.sheet-section h4 {
+  margin: 0 0 .35rem;
+  font-size: .9rem;
+  color: var(--muted);
+}
+
+.sheet-section blockquote {
+  margin: .5rem 0;
+  padding: .55rem .8rem;
+  border-left: 3px solid var(--cyan);
+  background: var(--panel-strong);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.plain-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: .3rem;
+}
+
+.kv-grid {
+  display: grid;
+  gap: .5rem;
+  margin: 0;
+}
+
+.kv-grid div {
+  display: grid;
+  gap: .1rem;
+}
+
+.kv-grid dt {
+  color: var(--muted);
+  font-size: .8rem;
+}
+
+.kv-grid dd {
+  margin: 0;
+}
+
+.check-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: .05rem .45rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: .72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.check-badge.ok {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 45%, var(--line));
+}
+
+.check-badge.approx {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 45%, var(--line));
+}
+
+.check-badge.missing {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+}
+
+.check-badge.none {
+  color: var(--faint);
+}
+
+.quality-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem;
+}
+
+.quality-grid span {
+  padding: .2rem .55rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: .78rem;
+}
+
+.quality-grid .q-ok {
+  color: var(--green);
+}
+
+.quality-grid .q-ko {
+  color: var(--faint);
+}
+
+.step-list {
+  display: grid;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.step-card.current {
+  border-color: color-mix(in srgb, var(--amber) 55%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--amber) 25%, transparent), var(--shadow);
+}
+
+.step-checklist {
+  display: grid;
+  gap: .45rem;
+  margin: .8rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step-checklist .check {
+  display: flex;
+  gap: .6rem;
+  align-items: flex-start;
+}
+
+.step-checklist input {
+  margin-top: .2rem;
+  accent-color: var(--cyan);
+}
+
+.deliverable {
+  margin: .4rem 0 0;
+  color: var(--cyan);
+  font-weight: 600;
+}
+
+.guide-steps-list {
+  display: grid;
+  gap: .45rem;
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+@media (min-width: 820px) {
+  .agent-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .kv-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1260px) {
+  .agent-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}

@@ -7,6 +7,33 @@ Ce dépôt transforme le cahier des charges en deux blocs volontairement sépar�
 
 Le tableau de bord et le bot facilitent le travail ; ils ne sont pas présentés comme une contribution scientifique du PFE.
 
+## En ligne (24 h/24, PC éteint)
+
+| Élément | Où | Rôle |
+|---|---|---|
+| Tableau de bord | <https://pfe-hla.pages.dev> (miroir : <https://mvsss97.github.io/pfe-hla/>) | Cockpit, Bibliothèque, PRISMA, **Agents IA**, **Fiches de lecture**, **Comparatif**, **Rédaction**, English Lab, cours |
+| Bot Telegram | [@PFE_MN_bot](https://t.me/PFE_MN_bot) (Cloudflare Worker) | t'écrit à 08:30, 13:30, 20:00 et après chaque passage des agents ; tri PRISMA par boutons, mots d'anglais, leçons + quiz, rédaction |
+| Agents IA | GitHub Actions, ~06:17 et ~15:47 (heure d'Alger) | collecte, tri IA, lecture des PDF, fiches vérifiées, synthèse — avec la clé **Gemini gratuite** |
+
+### Ce que font les agents à chaque passage (`.github/workflows/daily.yml`)
+
+1. Appliquent tes décisions Telegram au journal PRISMA (`sync-decisions`, puis `sync-ack` une fois la base sauvegardée).
+2. Figent le protocole **v1 (provisoire)** et exécutent une seule fois la recherche formelle PRISMA ; la veille `watch` cherche ensuite les nouveautés deux fois par jour.
+3. **Trieur IA** : suggestions garder/exclure (I1–I5/E1–E8, pertinence 0–5). Ce ne sont jamais des décisions : tu confirmes sur Telegram (bouton « 🤖 Comme l'IA »).
+4. **Lecteur IA** : télécharge les PDF en accès ouvert (arXiv, ACL Anthology, OpenReview…), lit tout le texte et écrit une fiche ; chaque citation est recherchée mot pour mot dans le PDF (✓ / ≈ / ✗).
+5. **Synthèse IA** : comparatif, incohérences, lacunes et brouillon d'état de l'art.
+6. Publient le site (Cloudflare Pages + miroir GitHub Pages), sauvegardent la base chiffrée (branche `research-db`) et préviennent le bot.
+
+Les consignes des agents sont lisibles dans `agents/prompts/` et leurs formats dans `agents/schemas/`. Le moteur par défaut est Gemini (`GEMINI_API_KEY`, niveau gratuit, chaîne de modèles avec relances si un modèle est saturé) ; Claude Code reste possible en option (`AGENT_BACKEND=claude`).
+
+### Configuration unique (à lancer une fois soi-même)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup-secrets.ps1
+```
+
+Le script copie `GEMINI_API_KEY` de `.env` vers les secrets GitHub, crée le mot de passe de la sauvegarde chiffrée, protège le webhook Telegram par un secret privé et lance un premier passage.
+
 ## État honnête
 
 - Le squelette reproductible et les tests unitaires du cœur WIR sont inclus.
@@ -14,7 +41,8 @@ Le tableau de bord et le bot facilitent le travail ; ils ne sont pas présentés
 - Aucun **résultat final de PFE** n'est prérempli. Le snapshot contient seulement un smoke test technique DistilBERT sur deux phrases synthétiques, explicitement étiqueté comme tel.
 - Le collecteur automatisé actuel couvre OpenAlex et arXiv. IEEE Xplore, ACM DL, ACL Anthology et les bases institutionnelles doivent encore être interrogés/importés avant de parler de revue exhaustive.
 - Le cahier des charges ne fixe ni dataset, ni modèle, ni budget de requêtes. Les hypothèses proposées dans `docs/02-protocole-experimental.md` doivent être validées par l'encadrant.
-- Le dossier n'est pas encore un dépôt Git et les runs ne portent pas encore le hash du protocole. Avant le premier `--run-kind review`, versionner/archiver le protocole et lier cette version aux exécutions ; jusque-là, utiliser `pilot`.
+- Le dossier est un dépôt Git et chaque run `review` porte la version du protocole (SHA-256 + commit). La v1 est **provisoire** : la faire valider par l'encadrant (`python -m pfe_hla protocol-status v1 validated`) ou créer une v2.
+- Les fiches et la synthèse IA sont des brouillons : relire chaque fiche et ne citer que les éléments marqués ✓ après vérification dans le PDF.
 - Le jeton Telegram publié dans la conversation doit être révoqué. Ne jamais le recopier dans ce dépôt.
 
 ## Démarrage sous Windows
@@ -89,7 +117,7 @@ La couche PDF actuelle conserve un document courant par article. Ne pas remplace
 4. Lancer `python -m pfe_hla bot-poll --watch`.
 5. Depuis le téléphone, envoyer `/start VOTRE_CODE` au bot, puis supprimer ce message.
 
-Commandes : `/today`, `/more`, `/papers`, `/search`, `/words`, `/stats`, `/site`, `/help`.
+Commandes du bot hébergé : `/menu`, `/aujourdhui`, `/tri`, `/fiches`, `/prisma`, `/anglais`, `/apprendre`, `/quiz`, `/redaction`, `/plan`, `/agents`, `/chercher`, `/site`, `/reglages`, `/aide` ; les anciennes (`/today`, `/more`, `/papers`, `/search`, `/words`, `/stats`, `/help`) restent acceptées. Le poller local ci-dessous reste disponible pour un usage hors ligne.
 
 Pour un envoi quotidien lorsque le PC est allumé :
 

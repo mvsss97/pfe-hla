@@ -251,7 +251,7 @@ class CompanionDatabaseTests(unittest.TestCase):
         ).fetchone()
         self.assertGreater(datetime.fromisoformat(updated["due_at"]), datetime.now(UTC))
         state = build_public_state(self.connection)
-        self.assertEqual(state["schemaVersion"], 1)
+        self.assertEqual(state["schemaVersion"], 2)
         self.assertEqual(len(state["papers"]), 9)
         self.assertNotIn("telegram_token", json.dumps(state))
 

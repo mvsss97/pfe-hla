@@ -5,8 +5,12 @@
     ["cockpit", "Cockpit"],
     ["bibliotheque", "Bibliothèque"],
     ["prisma", "PRISMA"],
+    ["agents", "Agents IA"],
+    ["fiches", "Fiches de lecture"],
+    ["comparatif", "Comparatif"],
     ["taxonomie", "Taxonomie"],
     ["experiences", "Expériences WIR"],
+    ["redaction", "Rédaction"],
     ["english", "English Lab"],
     ["guide", "Guide"],
   ];
@@ -15,6 +19,7 @@
     theme: "hardlabel.theme",
     savedPapers: "hardlabel.savedPapers",
     vocabulary: "hardlabel.vocabulary.progress",
+    redaction: "hardlabel.redaction.checklist",
   };
 
   const DEFAULT_PRISMA = Object.freeze({
@@ -193,8 +198,12 @@
   }
 
   function currentRoute() {
-    const candidate = location.hash.replace(/^#/, "");
+    const candidate = location.hash.replace(/^#/, "").split("/")[0];
     return ROUTES.some(([route]) => route === candidate) ? candidate : "cockpit";
+  }
+
+  function routeDetail() {
+    return decodeURIComponent(location.hash.replace(/^#/, "").split("/")[1] || "");
   }
 
   function showRoute(route, options = {}) {
@@ -209,7 +218,8 @@
     const label = ROUTES.find(([candidate]) => candidate === valid)?.[1] || "Cockpit";
     $("#view-label").textContent = label;
     document.title = `${label} · HardLabel Lab`;
-    if (!options.initial && location.hash !== `#${valid}`) history.replaceState(null, "", `#${valid}`);
+    if (!options.initial && location.hash.split("/")[0] !== `#${valid}`) history.replaceState(null, "", `#${valid}`);
+    if (valid === "fiches") renderSheetDetail(routeDetail());
     if (options.focus) {
       window.scrollTo({ top: 0, behavior: "smooth" });
       $("#main-content")?.focus({ preventScroll: true });
@@ -225,7 +235,7 @@
       });
     });
     document.addEventListener("keydown", (event) => {
-      if (event.altKey && !event.ctrlKey && /^[1-7]$/.test(event.key)) {
+      if (event.altKey && !event.ctrlKey && /^[1-9]$/.test(event.key) && ROUTES[Number(event.key) - 1]) {
         event.preventDefault();
         location.hash = ROUTES[Number(event.key) - 1][0];
       }
@@ -411,7 +421,18 @@
         ? [access === "hard" ? "hard-label" : access === "score" ? "score-based" : "accès vérifié · autre", ...componentList]
         : ["cadre à vérifier"];
       scientificTags.forEach((tag) => tagRow.append(element("span", "", tag)));
+      if (paper.ai && typeof paper.ai === "object") {
+        const verdict = { include: "IA : garder", exclude: `IA : exclure ${paper.ai.code || ""}`, uncertain: "IA : incertain" }[paper.ai.decision] || "IA";
+        const aiTag = element("span", "ai-tag", `${verdict} · ${paper.ai.relevance ?? "?"}/5`);
+        aiTag.title = String(paper.ai.rationale || "");
+        tagRow.append(aiTag);
+      }
+      if (paper.triage && typeof paper.triage === "object") {
+        const human = { include: "toi : gardé", exclude: `toi : exclu ${paper.triage.code || ""}`, uncertain: "toi : incertain", later: "toi : plus tard" }[paper.triage.decision];
+        if (human) tagRow.append(element("span", "human-tag", human));
+      }
       card.append(tagRow);
+      card.dataset.search += ` ${paper.ai?.rationale || ""}`;
 
       const actions = element("div", "card-actions");
       const sourceUrl = safeWebUrl(paper.url || paper.source_url || paper.doi_url || paper.pdfUrl);
@@ -423,6 +444,11 @@
         actions.append(link);
       } else {
         actions.append(element("span", "microcopy", "Lien à vérifier"));
+      }
+      if (paper.sheet && paper.key) {
+        const sheetLink = element("a", "", "Fiche IA");
+        sheetLink.href = `#fiches/${encodeURIComponent(paper.key)}`;
+        actions.append(sheetLink);
       }
       const save = element("button", "save-paper", "＋ À lire");
       save.type = "button";
@@ -946,6 +972,12 @@
         makeSession();
       }
       if (snapshot.experiments) renderCompletedRuns(snapshot.experiments);
+      if (snapshot.agents) renderAgents(snapshot.agents);
+      if (snapshot.protocol && typeof snapshot.protocol === "object") {
+        const protocol = snapshot.protocol;
+        const status = protocol.status === "validated" ? "validé par l’encadrant" : "provisoire, à faire valider par l’encadrant";
+        $("#prisma-intro").textContent += ` Protocole ${protocol.version} (${status}), empreinte SHA-256 ${String(protocol.sha256 || "").slice(0, 12)}…`;
+      }
       updateCockpitFromPapers(snapshot.papers);
       const generated = snapshot.generatedAt ? new Date(snapshot.generatedAt) : null;
       $("#prisma-status").textContent = generated && !Number.isNaN(generated.getTime())
@@ -954,6 +986,525 @@
     } catch (_error) {
       $("#data-mode").textContent = "Mode local · seeds explicites";
     }
+  }
+
+  // ─── Agents IA, fiches, comparatif, rédaction ──────────────────────────────
+
+  const ACCESS_LABELS = {
+    "hard-label": "hard-label",
+    "score-based": "score-based",
+    "white-box": "white-box",
+    mixed: "mixte",
+    "not-applicable": "non applicable",
+    unknown: "à vérifier",
+  };
+  const TASK_LABELS = { screening: "Trieur", reading: "Lecteur", synthesis: "Synthèse", pipeline: "Pipeline" };
+  const ELIGIBILITY_LABELS = { include: "garder", exclude: "exclure", uncertain: "incertain" };
+
+  let sheetsState = { sheets: [], synthesis: null };
+  let learningState = null;
+
+  function formatDateTime(value) {
+    const date = value ? new Date(value) : null;
+    if (!date || Number.isNaN(date.getTime())) return "—";
+    return new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(date);
+  }
+
+  function textList(items, emptyText = "Non précisé.") {
+    const list = element("ul", "plain-list");
+    const values = Array.isArray(items) ? items.filter((item) => String(item || "").trim()) : [];
+    if (!values.length) list.append(element("li", "microcopy", emptyText));
+    values.forEach((item) => list.append(element("li", "", String(item))));
+    return list;
+  }
+
+  function checkBadge(check) {
+    if (!check) return element("span", "check-badge none", "non vérifié");
+    const labels = { exact_quote: "✓ trouvé", value_only: "≈ valeur seule", not_found: "✗ introuvable" };
+    const kinds = { exact_quote: "ok", value_only: "approx", not_found: "missing" };
+    const page = check.page ? ` p. ${check.page}` : "";
+    return element("span", `check-badge ${kinds[check.status] || "none"}`, `${labels[check.status] || check.status}${page}`);
+  }
+
+  function renderAgents(agents) {
+    const runs = Array.isArray(agents.runs) ? agents.runs : [];
+    $("#agents-screened").textContent = String(safeInteger(agents.screenedPapers));
+    $("#agents-sheets").textContent = String(safeInteger(agents.sheets));
+    $("#agents-queue").textContent = String(safeInteger(agents.readingQueue));
+    $("#agents-last").textContent = agents.lastSuccessAt ? formatDateTime(agents.lastSuccessAt) : "—";
+    const latest = runs[0];
+    const waiting = latest && latest.task === "pipeline" && latest.status === "skipped";
+    $("#agents-token").hidden = !waiting;
+    const status = $("#agents-status");
+    status.textContent = waiting ? "En attente de la clé IA" : agents.lastSuccessAt ? `Actifs · ${formatDateTime(agents.lastSuccessAt)}` : "Aucun passage";
+    status.className = `status large ${waiting ? "amber" : agents.lastSuccessAt ? "cyan" : "neutral"}`;
+    const totals = agents.totals || {};
+    for (const task of ["screening", "reading", "synthesis"]) {
+      const node = $(`#agent-${task}`);
+      if (!node) continue;
+      const total = totals[task];
+      node.textContent = total ? `${total.ok} réussi(s) · ${total.error} erreur(s)` : "pas encore lancé";
+    }
+    const collect = $("#agent-collect");
+    if (collect && state.backend?.searchRuns) {
+      const ok = state.backend.searchRuns.filter((run) => run.status === "ok").length;
+      collect.textContent = `${ok} collecte(s) réussie(s)`;
+    }
+    const body = $("#agents-log");
+    body.replaceChildren();
+    if (!runs.length) {
+      const row = element("tr");
+      const cell = element("td", "", "Aucun passage enregistré.");
+      cell.colSpan = 7;
+      row.append(cell);
+      body.append(row);
+    }
+    runs.forEach((run) => {
+      const row = element("tr");
+      const statusCell = element("td");
+      const kind = run.status === "ok" ? "cyan" : run.status === "skipped" ? "amber" : "danger";
+      statusCell.append(element("span", `status ${kind}`, run.status === "ok" ? "OK" : run.status === "skipped" ? "en attente" : "erreur"));
+      const seconds = run.durationMs ? `${Math.round(run.durationMs / 1000)} s` : "—";
+      row.append(
+        element("td", "", formatDateTime(run.startedAt)),
+        element("td", "", TASK_LABELS[run.task] || run.task),
+        element("td", "", run.target || "—"),
+        statusCell,
+        element("td", "", run.model || "—"),
+        element("td", "", seconds),
+        element("td", "", run.detail || ""),
+      );
+      body.append(row);
+    });
+    $("#agents-log-count").textContent = `${runs.length} entrée${runs.length > 1 ? "s" : ""}`;
+    const health = $("#agents-health");
+    if (health) {
+      health.replaceChildren();
+      const link = element("a", "", waiting ? "En attente de la clé IA" : `${safeInteger(agents.sheets)} fiche(s) · ${safeInteger(agents.screenedPapers)} pré-triés`);
+      link.href = "#agents";
+      health.append(link);
+    }
+  }
+
+  function sheetAccess(item) {
+    return String(item?.sheet?.acces_oracle?.regime || "unknown");
+  }
+
+  function renderSheetsGrid() {
+    const grid = $("#sheets-grid");
+    if (!grid) return;
+    const query = normalizeText($("#sheets-search")?.value);
+    const accessFilter = $("#sheets-access")?.value || "all";
+    grid.replaceChildren();
+    let visible = 0;
+    sheetsState.sheets.forEach((item) => {
+      const sheet = item.sheet || {};
+      const access = sheetAccess(item);
+      const haystack = normalizeText(`${item.title} ${(item.authors || []).join(" ")} ${sheet.resume_simple} ${sheet.methode} ${(sheet.evaluation?.datasets || []).join(" ")}`);
+      const accessOk = accessFilter === "all" || access === accessFilter || (accessFilter === "other" && !["hard-label", "score-based", "white-box"].includes(access));
+      if ((query && !haystack.includes(query)) || !accessOk) return;
+      visible += 1;
+      const card = element("article", `paper-card${access === "hard-label" ? " priority" : ""}`);
+      const top = element("div", "paper-top");
+      top.append(
+        element("span", `status ${access === "hard-label" ? "cyan" : "neutral"}`, ACCESS_LABELS[access] || access),
+        element("span", "", `${item.venue || "source ?"} · ${item.year || "s. d."}`),
+      );
+      const summary = item.checks?.summary || {};
+      const tags = element("div", "tag-row");
+      tags.append(
+        element("span", "", `pertinence ${sheet.pertinence_pfe?.score ?? "?"}/5`),
+        element("span", "", `IA : ${ELIGIBILITY_LABELS[sheet.eligibilite?.suggestion] || "?"}`),
+        element("span", "", `citations ✓${summary.exact_quote ?? 0} ≈${summary.value_only ?? 0} ✗${summary.not_found ?? 0}`),
+      );
+      const actions = element("div", "card-actions");
+      const open = element("a", "", "Lire la fiche");
+      open.href = `#fiches/${encodeURIComponent(item.key)}`;
+      actions.append(open);
+      const source = safeWebUrl(item.url || item.pdfUrl);
+      if (source) {
+        const link = element("a", "", "Source");
+        link.href = source;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        actions.append(link);
+      }
+      card.append(
+        top,
+        element("h2", "", item.title),
+        element("p", "authors", (item.authors || []).slice(0, 6).join(", ") || "Auteurs à vérifier"),
+        element("p", "", String(sheet.resume_simple || "").slice(0, 420)),
+        tags,
+        actions,
+      );
+      grid.append(card);
+    });
+    $("#sheets-count").textContent = String(sheetsState.sheets.length);
+    $("#sheets-empty").hidden = visible > 0;
+    if (!sheetsState.sheets.length) $("#sheets-empty").hidden = false;
+  }
+
+  function section(title, ...children) {
+    const wrap = element("section", "sheet-section");
+    wrap.append(element("h3", "", title), ...children);
+    return wrap;
+  }
+
+  function renderSheetDetail(key) {
+    const panel = $("#sheet-detail");
+    if (!panel) return;
+    const item = key ? sheetsState.sheets.find((candidate) => candidate.key === key) : null;
+    if (!item) {
+      panel.hidden = true;
+      panel.replaceChildren();
+      return;
+    }
+    const sheet = item.sheet || {};
+    const checks = Array.isArray(item.checks?.citations) ? item.checks.citations : [];
+    const checkFor = (field) => checks.find((check) => check.field === field);
+    panel.replaceChildren();
+
+    const head = element("div", "panel-head");
+    const titles = element("div");
+    titles.append(element("p", "overline", `Fiche de lecture · ${item.year || "s. d."} · ${item.venue || ""}`), element("h2", "", item.title));
+    const close = element("a", "text-button", "✕ Fermer");
+    close.href = "#fiches";
+    head.append(titles, close);
+    panel.append(head);
+    panel.append(element("p", "authors", (item.authors || []).join(", ")));
+
+    const warning = element("p", "seed-note");
+    warning.append(element("b", "", "Brouillon IA à vérifier. "), document.createTextNode(`Écrit par ${item.model || "un modèle IA"} le ${formatDateTime(item.createdAt)} à partir du texte intégral (PDF SHA-256 ${String(item.documentSha256 || "").slice(0, 12)}…). Ne cite que ce qui est marqué ✓ après relecture.`));
+    panel.append(warning);
+
+    const links = element("div", "card-actions");
+    for (const [label, url] of [["Source", item.url], ["PDF", item.pdfUrl]]) {
+      const safe = safeWebUrl(url);
+      if (!safe) continue;
+      const link = element("a", "", label);
+      link.href = safe;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      links.append(link);
+    }
+    panel.append(links);
+
+    panel.append(section("En bref (pour débutant)", element("p", "", sheet.resume_simple || "—")));
+    panel.append(section("Problème", element("p", "", sheet.probleme || "—")));
+    panel.append(section("Contributions", textList(sheet.contributions)));
+    panel.append(section("Méthode", element("p", "", sheet.methode || "—")));
+
+    const access = sheet.acces_oracle || {};
+    const accessBlock = element("div");
+    accessBlock.append(element("p", "", `${ACCESS_LABELS[access.regime] || access.regime || "?"} — ${access.justification || ""}`));
+    if (access.citation) {
+      const quote = element("blockquote", "", `« ${access.citation} » `);
+      quote.append(checkBadge(checkFor("acces_oracle")));
+      accessBlock.append(quote);
+    }
+    panel.append(section("Accès de l’attaquant (oracle)", accessBlock));
+
+    const components = sheet.composants || {};
+    const dl = element("dl", "kv-grid");
+    for (const [label, value] of [
+      ["Classement des mots (WIR)", components.wir],
+      ["Candidats de substitution", components.candidats],
+      ["Filtres / contraintes", components.filtres],
+      ["Stratégie de recherche", components.recherche],
+      ["Budget de requêtes", components.budget_requetes],
+    ]) {
+      const row = element("div");
+      row.append(element("dt", "", label), element("dd", "", value || "—"));
+      dl.append(row);
+    }
+    panel.append(section("Composants de l’attaque", dl));
+
+    const evaluation = sheet.evaluation || {};
+    const evalGrid = element("dl", "kv-grid");
+    for (const [label, values] of [
+      ["Datasets", evaluation.datasets],
+      ["Modèles attaqués", evaluation.modeles_cibles],
+      ["Métriques", evaluation.metriques],
+      ["Baselines", evaluation.baselines],
+    ]) {
+      const row = element("div");
+      row.append(element("dt", "", label), element("dd", "", (values || []).join(", ") || "—"));
+      evalGrid.append(row);
+    }
+    panel.append(section("Évaluation", evalGrid));
+
+    const resultsWrap = element("div", "table-wrap");
+    const table = element("table");
+    const thead = element("thead");
+    const headRow = element("tr");
+    ["Résultat", "Valeur", "Citation dans l’article", "Vérification"].forEach((label) => headRow.append(element("th", "", label)));
+    thead.append(headRow);
+    const tbody = element("tbody");
+    (sheet.resultats || []).forEach((result, index) => {
+      const row = element("tr");
+      const badge = element("td");
+      badge.append(checkBadge(checkFor(`resultats[${index}]`)));
+      row.append(element("td", "", result.affirmation || ""), element("td", "", result.valeur || ""), element("td", "", result.citation || "(dans un tableau)"), badge);
+      tbody.append(row);
+    });
+    table.append(thead, tbody);
+    resultsWrap.append(table);
+    panel.append(section("Résultats annoncés", resultsWrap));
+
+    const critique = element("div", "guide-grid");
+    for (const [label, values] of [
+      ["Points forts", sheet.points_forts],
+      ["Faiblesses", sheet.faiblesses],
+      ["Menaces à la validité", sheet.menaces_validite],
+      ["Limites déclarées par les auteurs", sheet.limites_auteurs],
+    ]) {
+      const box = element("div");
+      box.append(element("h4", "", label), textList(values));
+      critique.append(box);
+    }
+    panel.append(section("Regard critique", critique));
+
+    const repro = sheet.reproductibilite || {};
+    const reproText = element("p", "", `${repro.code_disponible === true ? "Code publié" : repro.code_disponible === false ? "Code non publié" : "Disponibilité du code non précisée"}. ${repro.commentaire || ""}`);
+    const reproBlock = element("div");
+    reproBlock.append(reproText);
+    const codeUrl = safeWebUrl(repro.lien_code);
+    if (codeUrl) {
+      const link = element("a", "", codeUrl);
+      link.href = codeUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      reproBlock.append(link);
+    }
+    panel.append(section("Reproductibilité", reproBlock));
+
+    const quality = sheet.qualite || {};
+    const qualityLabels = {
+      menace_definie: "Menace définie",
+      budget_complet: "Budget complet",
+      baselines_comparables: "Baselines comparables",
+      contraintes_operationnalisees: "Contraintes opérationnalisées",
+      echantillon_decrit: "Échantillon décrit",
+      variance_ou_ic: "Variance / IC",
+      reproductible: "Reproductible",
+      limites_rapportees: "Limites rapportées",
+    };
+    const qualityGrid = element("div", "quality-grid");
+    let score = 0;
+    Object.entries(qualityLabels).forEach(([field, label]) => {
+      const ok = Number(quality[field]) === 1;
+      score += ok ? 1 : 0;
+      qualityGrid.append(element("span", ok ? "q-ok" : "q-ko", `${ok ? "✓" : "✗"} ${label}`));
+    });
+    panel.append(section(`Qualité (protocole) · ${score}/8`, qualityGrid));
+
+    const eligibility = sheet.eligibilite || {};
+    panel.append(section("Éligibilité suggérée par l’IA", element("p", "", `${ELIGIBILITY_LABELS[eligibility.suggestion] || "?"}${eligibility.code_exclusion ? ` (${eligibility.code_exclusion})` : ""} — ${eligibility.justification || ""} La décision reste la tienne (bouton sur Telegram).`)));
+
+    const relevance = sheet.pertinence_pfe || {};
+    panel.append(section(`Pertinence pour ton PFE · ${relevance.score ?? "?"}/5`, element("p", "", `${(relevance.questions || []).join(", ")} — ${relevance.pourquoi || ""}`)));
+    panel.append(section("Pistes de contribution pour ton PFE", textList(sheet.pistes_contribution)));
+
+    const sentence = element("div");
+    sentence.append(element("blockquote", "", sheet.phrase_etat_de_lart || "—"));
+    const copy = element("button", "text-button", "Copier la phrase");
+    copy.type = "button";
+    copy.addEventListener("click", () => copyText(sheet.phrase_etat_de_lart || ""));
+    sentence.append(copy);
+    panel.append(section("Phrase pour l’état de l’art (à reformuler)", sentence));
+
+    const vocab = element("ul", "plain-list");
+    (sheet.vocabulaire || []).forEach((word, index) => {
+      const line = element("li");
+      line.append(element("b", "", word.terme || ""), document.createTextNode(` = ${word.traduction_fr || ""} — ${word.definition_en || ""} `));
+      if (word.exemple_en) line.append(element("i", "", `« ${word.exemple_en} » `));
+      line.append(checkBadge(checkFor(`vocabulaire[${index}]`)));
+      vocab.append(line);
+    });
+    panel.append(section("Vocabulaire anglais (ajouté à l’English Lab)", vocab));
+
+    panel.hidden = false;
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function fillChecklist(selector, items, renderItem) {
+    const list = $(selector);
+    if (!list) return;
+    list.replaceChildren();
+    const values = Array.isArray(items) ? items : [];
+    if (!values.length) {
+      const empty = element("li");
+      empty.append(element("span", "", "—"), document.createTextNode("Rien pour l’instant."));
+      list.append(empty);
+      return;
+    }
+    values.forEach((item) => {
+      const line = element("li");
+      line.append(element("span", "", "•"), renderItem(item));
+      list.append(line);
+    });
+  }
+
+  function titleForKey(key) {
+    const sheet = sheetsState.sheets.find((item) => item.key === key);
+    if (!sheet) return key;
+    const firstAuthor = String((sheet.authors || [])[0] || "").split(" ").pop();
+    return firstAuthor ? `${firstAuthor} et al. (${sheet.year || "s. d."})` : sheet.title;
+  }
+
+  function renderComparatif() {
+    const synthesis = sheetsState.synthesis;
+    const content = synthesis?.content || null;
+    const body = $("#comparatif-body");
+    if (!body) return;
+    body.replaceChildren();
+    let rows = Array.isArray(content?.comparatif) ? content.comparatif : [];
+    if (!rows.length) {
+      rows = sheetsState.sheets.map((item) => {
+        const sheet = item.sheet || {};
+        const components = sheet.composants || {};
+        const evaluation = sheet.evaluation || {};
+        return {
+          key: item.key,
+          acces: ACCESS_LABELS[sheetAccess(item)] || sheetAccess(item),
+          wir: components.wir,
+          candidats: components.candidats,
+          recherche: components.recherche,
+          datasets: (evaluation.datasets || []).join(", "),
+          modeles: (evaluation.modeles_cibles || []).join(", "),
+          budget: components.budget_requetes,
+          resultat_principal: (sheet.resultats || [])[0] ? `${sheet.resultats[0].affirmation} : ${sheet.resultats[0].valeur}` : "",
+          comparabilite: "Fiche seule (synthèse pas encore produite)",
+        };
+      });
+    }
+    if (!rows.length) {
+      const row = element("tr");
+      const cell = element("td", "", "Aucune fiche pour l’instant.");
+      cell.colSpan = 10;
+      row.append(cell);
+      body.append(row);
+    }
+    rows.forEach((item) => {
+      const row = element("tr");
+      const titleCell = element("th");
+      const link = element("a", "", titleForKey(item.key));
+      link.href = `#fiches/${encodeURIComponent(item.key)}`;
+      titleCell.append(link);
+      row.append(titleCell);
+      ["acces", "wir", "candidats", "recherche", "datasets", "modeles", "budget", "resultat_principal", "comparabilite"].forEach((field) => {
+        row.append(element("td", "", item[field] || "—"));
+      });
+      body.append(row);
+    });
+    const status = $("#synthesis-status");
+    if (synthesis) {
+      status.textContent = `Synthèse · ${formatDateTime(synthesis.createdAt)}`;
+      status.className = "status cyan large";
+      $("#comparatif-intro").textContent = `Synthèse de ${synthesis.keys?.length || rows.length} fiche(s) par ${synthesis.model || "l’agent synthèse"}. Les cellules disent aussi pourquoi certains chiffres ne sont pas directement comparables.`;
+    }
+    $("#synthesis-overview").textContent = content?.vue_ensemble || (sheetsState.sheets.length ? "La synthèse sera produite au prochain passage des agents (il faut au moins deux fiches)." : "La synthèse apparaîtra dès que deux fiches de lecture existeront.");
+    const keysText = (keys) => (Array.isArray(keys) && keys.length ? ` (${keys.map(titleForKey).join(", ")})` : "");
+    fillChecklist("#synthesis-inconsistencies", content?.incoherences, (item) => document.createTextNode(`${item.description}${keysText(item.cles)}`));
+    fillChecklist("#synthesis-gaps", content?.lacunes_pistes, (item) => document.createTextNode(`${item.piste} — ${item.justification}${keysText(item.cles)}`));
+    fillChecklist("#synthesis-next", content?.prochaines_etapes, (item) => document.createTextNode(String(item)));
+    const sota = $("#synthesis-sota");
+    const sections = Array.isArray(content?.etat_de_lart) ? content.etat_de_lart : [];
+    if (sections.length) {
+      sota.replaceChildren();
+      sections.forEach((part) => {
+        sota.append(element("h3", "", part.titre || ""), element("p", "", part.paragraphe || ""));
+      });
+      const copy = $("#copy-sota");
+      copy.disabled = false;
+      copy.onclick = () => copyText(sections.map((part) => `${part.titre}\n\n${part.paragraphe}`).join("\n\n"));
+    }
+  }
+
+  function currentWeek(learning) {
+    const start = new Date(`${learning?.startDate || "2026-10-06"}T00:00:00`);
+    const days = Math.floor((Date.now() - start.getTime()) / 86400000);
+    return Math.min(Math.max(Math.floor(days / 7) + 1, 1), 16);
+  }
+
+  function renderRedaction() {
+    const container = $("#redaction-steps");
+    if (!container || !learningState) return;
+    const steps = Array.isArray(learningState.redaction) ? learningState.redaction : [];
+    const week = currentWeek(learningState);
+    $("#redaction-week").textContent = `Semaine ${week} / 16`;
+    const done = readJSON(STORAGE.redaction, {});
+    container.replaceChildren();
+    steps.forEach((step) => {
+      const current = week >= step.from && week <= step.to;
+      const card = element("article", `panel step-card${current ? " current" : ""}`);
+      card.id = `redaction-${step.id}`;
+      const head = element("div", "panel-head");
+      const titles = element("div");
+      titles.append(element("p", "overline", step.when || ""), element("h2", "", step.title || ""));
+      head.append(titles, element("span", `status ${current ? "amber" : "neutral"}`, current ? "Étape du moment" : `S${step.from}${step.to !== step.from ? `–${step.to}` : ""}`));
+      card.append(head, element("p", "", step.goal || ""));
+      const list = element("ul", "step-checklist");
+      (step.checklist || []).forEach((item, index) => {
+        const id = `${step.id}-${index}`;
+        const line = element("li");
+        const label = element("label", "check");
+        const box = element("input");
+        box.type = "checkbox";
+        box.checked = Boolean(done[id]);
+        box.addEventListener("change", () => {
+          const saved = readJSON(STORAGE.redaction, {});
+          if (box.checked) saved[id] = true;
+          else delete saved[id];
+          writeJSON(STORAGE.redaction, saved);
+        });
+        label.append(box, element("span", "", item));
+        line.append(label);
+        list.append(line);
+      });
+      card.append(list);
+      if (step.tip) card.append(element("p", "microcopy", `💡 ${step.tip}`));
+      if (step.deliverable) card.append(element("p", "deliverable", `Livrable : ${step.deliverable}`));
+      container.append(card);
+    });
+  }
+
+  async function loadSheetsState() {
+    try {
+      const response = await fetch("data/sheets.json", { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      sheetsState = {
+        sheets: Array.isArray(data?.sheets) ? data.sheets : [],
+        synthesis: data?.synthesis && typeof data.synthesis === "object" ? data.synthesis : null,
+      };
+    } catch (_error) {
+      sheetsState = { sheets: [], synthesis: null };
+    }
+    renderSheetsGrid();
+    renderComparatif();
+    if (currentRoute() === "fiches") renderSheetDetail(routeDetail());
+  }
+
+  async function loadLearning() {
+    try {
+      const response = await fetch("data/learning.json", { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      learningState = await response.json();
+    } catch (_error) {
+      learningState = null;
+      const container = $("#redaction-steps");
+      if (container) container.replaceChildren(element("p", "microcopy", "Étapes indisponibles hors ligne."));
+      return;
+    }
+    renderRedaction();
+  }
+
+  function initializeResearchViews() {
+    ["#sheets-search", "#sheets-access"].forEach((selector) => {
+      $(selector)?.addEventListener("input", renderSheetsGrid);
+      $(selector)?.addEventListener("change", renderSheetsGrid);
+    });
   }
 
   function researchSnapshot() {
@@ -1043,6 +1594,9 @@
   initializePrisma();
   initializeExperiments();
   initializeVocabulary();
+  initializeResearchViews();
   registerWebMCP();
   void loadBackendState();
+  void loadSheetsState();
+  void loadLearning();
 })();

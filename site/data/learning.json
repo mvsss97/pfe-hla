@@ -1,0 +1,505 @@
+{
+  "version": 1,
+  "startDate": "2026-10-06",
+  "modules": [
+    {
+      "id": "m1",
+      "emoji": "🧮",
+      "title": "Les maths utiles (retour aux bases)",
+      "intro": "Avant de comprendre l'IA, il faut comprendre comment la machine représente et compare les choses avec des nombres. Pas de panique : on ne garde que ce qui sert au PFE.",
+      "lessons": [
+        {
+          "id": "m1l1",
+          "title": "Un vecteur, c'est une liste de nombres",
+          "content": "Un vecteur est simplement une liste ordonnée de nombres, par exemple [2, 5, 1].\nChaque position décrit une caractéristique. Pour une maison : [surface, chambres, étage].\nEn IA, presque tout devient un vecteur : une image, un son, et surtout un mot.\nLa taille de la liste s'appelle la dimension. Les mots de BERT sont des vecteurs de dimension 768.\nOn peut additionner deux vecteurs case par case, ou les multiplier par un nombre.",
+          "example": "Le mot « chat » peut devenir [0.21, -0.43, 0.88, …]. Ces nombres ne se lisent pas à l'œil : ils sont appris par le modèle.",
+          "terms": [["vector", "vecteur"], ["dimension", "dimension"], ["feature", "caractéristique"]],
+          "quiz": {
+            "question": "Qu'est-ce qu'un vecteur en IA ?",
+            "options": ["Une liste ordonnée de nombres", "Un mot écrit en majuscules", "Un programme qui attaque un modèle"],
+            "answer": 0,
+            "explain": "Un vecteur est une liste de nombres ; chaque position représente une caractéristique."
+          }
+        },
+        {
+          "id": "m1l2",
+          "title": "Mesurer la ressemblance : la similarité cosinus",
+          "content": "Pour savoir si deux vecteurs se ressemblent, on regarde l'angle entre eux.\nLa similarité cosinus vaut 1 quand ils pointent dans la même direction, 0 quand ils n'ont rien à voir.\nCalcul : produit scalaire (somme des produits case par case) divisé par le produit des longueurs.\nDans ton PFE, elle sert à vérifier qu'un texte modifié garde le même sens que l'original.\nLe protocole propose un seuil : similarité ≥ 0,80 entre la phrase originale et la phrase attaquée.",
+          "example": "« Le film est excellent » et « Le film est superbe » ont une similarité élevée (≈ 0,9) ; « Le film est excellent » et « Il pleut à Alger » une similarité faible.",
+          "terms": [["cosine similarity", "similarité cosinus"], ["dot product", "produit scalaire"], ["threshold", "seuil"]],
+          "quiz": {
+            "question": "Une similarité cosinus proche de 1 signifie que…",
+            "options": ["les deux vecteurs sont très différents", "les deux vecteurs pointent dans la même direction", "le modèle s'est trompé"],
+            "answer": 1,
+            "explain": "Proche de 1 = même direction = sens très proche. C'est ce qu'on veut préserver lors d'une attaque."
+          }
+        },
+        {
+          "id": "m1l3",
+          "title": "Dérivée et pente : comment corriger une erreur",
+          "content": "Une fonction transforme une entrée en sortie, par exemple f(x) = x².\nLa dérivée mesure la pente : si on bouge un peu x, de combien f(x) change ?\nPente positive : f monte ; pente négative : f descend ; pente nulle : on est en bas d'une vallée (ou en haut).\nLe gradient, c'est la dérivée quand il y a beaucoup de variables : il indique la direction de la plus forte montée.\nPour réduire une erreur, on avance dans la direction opposée au gradient : c'est la descente de gradient.",
+          "example": "Avec f(x) = x², la dérivée est 2x. En x = 3 la pente vaut 6 : pour descendre, on diminue x.",
+          "terms": [["derivative", "dérivée"], ["gradient", "gradient"], ["slope", "pente"]],
+          "quiz": {
+            "question": "Pourquoi le gradient est-il important pour une attaque white-box ?",
+            "options": ["Il donne la direction qui change le plus la sortie du modèle", "Il compte le nombre de mots", "Il traduit le texte en anglais"],
+            "answer": 0,
+            "explain": "En white-box on calcule le gradient pour savoir comment modifier l'entrée. En hard-label, ce gradient est INACCESSIBLE : c'est toute la difficulté de ton sujet."
+          }
+        },
+        {
+          "id": "m1l4",
+          "title": "Probabilités et argmax : de la probabilité à l'étiquette",
+          "content": "Un classifieur calcule d'abord des scores (logits), puis les transforme en probabilités avec softmax.\nExemple : positif 0,93 ; négatif 0,07. La somme fait toujours 1.\nL'étiquette finale est la classe la plus probable : c'est l'argmax.\nUn modèle soft-label te montre les probabilités ; un modèle hard-label ne te montre QUE l'étiquette (« positif »).\nAvec seulement l'étiquette, on ne voit pas si une modification nous a rapproché de la frontière : on avance à l'aveugle.",
+          "example": "Score-based : « positif (0,93) » puis « positif (0,61) » → on voit qu'on progresse. Hard-label : « positif » puis « positif » → aucune information sur la progression.",
+          "terms": [["probability", "probabilité"], ["softmax", "softmax"], ["argmax", "argmax (classe maximale)"], ["logit", "score brut"]],
+          "quiz": {
+            "question": "Dans un accès hard-label, l'attaquant reçoit…",
+            "options": ["les probabilités de chaque classe", "uniquement la classe prédite", "les gradients du modèle"],
+            "answer": 1,
+            "explain": "Hard-label = seulement l'étiquette finale (l'argmax). Ni probabilité, ni logit, ni gradient."
+          }
+        }
+      ]
+    },
+    {
+      "id": "m2",
+      "emoji": "🤖",
+      "title": "Le Machine Learning en clair",
+      "intro": "Le Machine Learning, c'est apprendre une règle à partir d'exemples au lieu de la programmer à la main.",
+      "lessons": [
+        {
+          "id": "m2l1",
+          "title": "Apprendre à partir d'exemples",
+          "content": "On donne au modèle des milliers d'exemples avec la bonne réponse : c'est l'apprentissage supervisé.\nChaque exemple = une entrée (un texte) + une étiquette (positif/négatif).\nPendant l'entraînement, le modèle ajuste ses paramètres (des millions de nombres) pour se tromper de moins en moins.\nUne fois entraîné, il prédit l'étiquette de textes qu'il n'a jamais vus.\nLes paramètres appris sont appelés les poids (weights).",
+          "example": "SST-2 contient des phrases de critiques de films étiquetées positive ou négative : c'est le dataset proposé pour ton pilote.",
+          "terms": [["training", "entraînement"], ["label", "étiquette"], ["dataset", "jeu de données"], ["weights", "poids"]],
+          "quiz": {
+            "question": "Dans l'apprentissage supervisé, chaque exemple contient…",
+            "options": ["une entrée et la bonne réponse (étiquette)", "seulement une entrée", "un gradient"],
+            "answer": 0,
+            "explain": "Supervisé = on fournit la bonne réponse avec chaque exemple."
+          }
+        },
+        {
+          "id": "m2l2",
+          "title": "Classifieur et frontière de décision",
+          "content": "Un classifieur range chaque entrée dans une classe.\nImagine les textes comme des points dans l'espace : le modèle trace une frontière entre les points positifs et négatifs.\nCette frontière s'appelle la frontière de décision (decision boundary).\nUne attaque adversariale cherche à pousser un texte juste de l'autre côté de cette frontière, en le modifiant le moins possible.\nEn hard-label, on ne voit pas où est la frontière : on sait seulement de quel côté on se trouve.",
+          "example": "Remplacer « excellent » par « correct » peut suffire à faire passer un avis de « positif » à « négatif » si le texte est proche de la frontière.",
+          "terms": [["classifier", "classifieur"], ["decision boundary", "frontière de décision"], ["class", "classe"]],
+          "quiz": {
+            "question": "Que cherche une attaque adversariale par rapport à la frontière de décision ?",
+            "options": ["Rester le plus loin possible", "La franchir en modifiant le moins possible l'entrée", "La supprimer du modèle"],
+            "answer": 1,
+            "explain": "On veut traverser la frontière (changer la classe) avec une perturbation minimale."
+          }
+        },
+        {
+          "id": "m2l3",
+          "title": "Fonction de perte et descente de gradient",
+          "content": "La fonction de perte (loss) est la note de l'erreur : grande quand le modèle se trompe, petite quand il a raison.\nL'entraînement consiste à minimiser cette perte.\nOn calcule le gradient de la perte par rapport aux poids, puis on modifie les poids dans la direction opposée.\nLe pas de modification s'appelle le taux d'apprentissage (learning rate).\nOn répète sur tout le dataset plusieurs fois : chaque passage complet est une époque (epoch).",
+          "example": "C'est comme descendre une montagne dans le brouillard : à chaque pas, tu tâtes la pente sous tes pieds et tu descends.",
+          "terms": [["loss function", "fonction de perte"], ["learning rate", "taux d'apprentissage"], ["epoch", "époque"]],
+          "quiz": {
+            "question": "Pendant l'entraînement, on cherche à…",
+            "options": ["maximiser la perte", "minimiser la perte", "supprimer le gradient"],
+            "answer": 1,
+            "explain": "La perte mesure l'erreur : on la minimise grâce à la descente de gradient."
+          }
+        },
+        {
+          "id": "m2l4",
+          "title": "Évaluer un modèle honnêtement",
+          "content": "On sépare les données : un ensemble d'entraînement pour apprendre, un ensemble de test jamais vu pour évaluer.\nL'accuracy (exactitude) = pourcentage de bonnes prédictions sur le test.\nSurapprentissage (overfitting) : le modèle apprend par cœur l'entraînement et échoue sur le test.\nPour ton PFE : l'ASR d'une attaque se calcule UNIQUEMENT sur les exemples que le modèle classait correctement au départ.\nSinon on compterait comme « réussites » des erreurs que le modèle faisait déjà.",
+          "example": "Si DistilBERT classe bien 182 phrases sur 200, l'ASR se calcule sur ces 182 phrases seulement.",
+          "terms": [["test set", "ensemble de test"], ["accuracy", "exactitude"], ["overfitting", "surapprentissage"]],
+          "quiz": {
+            "question": "Sur quels exemples calcule-t-on l'ASR (taux de succès de l'attaque) ?",
+            "options": ["Sur tous les exemples", "Seulement sur ceux correctement classés au départ", "Seulement sur ceux mal classés"],
+            "answer": 1,
+            "explain": "Un exemple déjà mal classé n'a pas besoin d'être attaqué : il fausserait l'ASR."
+          }
+        }
+      ]
+    },
+    {
+      "id": "m3",
+      "emoji": "🗣",
+      "title": "Le NLP : faire comprendre le texte à la machine",
+      "intro": "Le Traitement Automatique du Langage (NLP, Natural Language Processing) est la branche de l'IA qui travaille sur le texte.",
+      "lessons": [
+        {
+          "id": "m3l1",
+          "title": "Tokenisation : découper le texte",
+          "content": "Un modèle ne lit pas des phrases : il lit des tokens, c'est-à-dire des morceaux de texte.\nUn token peut être un mot (« film »), un morceau de mot (« ##ment ») ou un signe de ponctuation.\nBERT utilise WordPiece : les mots rares sont coupés en sous-mots.\nChaque token reçoit un numéro (son identifiant dans le vocabulaire du modèle).\nDans une attaque au niveau du mot, on modifie des mots entiers ; mais le modèle, lui, voit des sous-mots.",
+          "example": "« unbelievable » → [« un », « ##bel », « ##ie », « ##vable »] avec un tokenizer WordPiece.",
+          "terms": [["token", "unité de texte"], ["tokenizer", "découpeur de texte"], ["subword", "sous-mot"]],
+          "quiz": {
+            "question": "Que fait un tokenizer ?",
+            "options": ["Il traduit le texte", "Il découpe le texte en tokens", "Il attaque le modèle"],
+            "answer": 1,
+            "explain": "Le tokenizer découpe le texte en unités (tokens) que le modèle sait lire."
+          }
+        },
+        {
+          "id": "m3l2",
+          "title": "Embeddings : des mots aux vecteurs",
+          "content": "Chaque token est transformé en vecteur : son embedding.\nLes embeddings sont appris pour que des mots au sens proche aient des vecteurs proches.\nOn peut donc chercher des synonymes en cherchant les vecteurs voisins (plus grande similarité cosinus).\nBeaucoup d'attaques utilisent des embeddings « contre-ajustés » (counter-fitted) pour proposer des remplacements plausibles.\nAttention : proche dans l'espace ne veut pas toujours dire synonyme (« bon » et « mauvais » peuvent être proches).",
+          "example": "Voisins de « good » : « great », « nice », « decent »… mais parfois « bad », d'où les filtres de sens.",
+          "terms": [["embedding", "représentation vectorielle"], ["synonym", "synonyme"], ["counter-fitted embeddings", "embeddings contre-ajustés"]],
+          "quiz": {
+            "question": "Pourquoi les embeddings sont-ils utiles pour une attaque ?",
+            "options": ["Ils permettent de trouver des mots de sens proche pour les substitutions", "Ils donnent les probabilités du modèle", "Ils comptent les requêtes"],
+            "answer": 0,
+            "explain": "Les vecteurs voisins fournissent des candidats de remplacement plausibles."
+          }
+        },
+        {
+          "id": "m3l3",
+          "title": "La classification de texte",
+          "content": "La classification de texte consiste à attribuer une catégorie à un texte.\nExemples : sentiment (positif/négatif), sujet (sport/politique), spam ou non, implication logique (entailment).\nDatasets classiques : SST-2 (phrases courtes de critiques), IMDb (longues critiques de films), AG News (actualités).\nLe modèle cible de ton PFE est un classifieur de texte déjà entraîné, qu'on attaque comme une boîte noire.\nLes textes longs donnent plus de mots à modifier, mais coûtent plus de requêtes.",
+          "example": "« A gripping, beautifully acted film » → positif ; « Two hours I will never get back » → négatif.",
+          "terms": [["sentiment analysis", "analyse de sentiment"], ["text classification", "classification de texte"], ["entailment", "implication logique"]],
+          "quiz": {
+            "question": "Quel dataset est proposé pour le pilote du PFE ?",
+            "options": ["ImageNet", "SST-2", "MNIST"],
+            "answer": 1,
+            "explain": "SST-2 : phrases courtes de sentiment, rapides à tester sur CPU. ImageNet et MNIST sont des images."
+          }
+        },
+        {
+          "id": "m3l4",
+          "title": "Transformers et BERT",
+          "content": "Le Transformer est l'architecture qui domine le NLP depuis 2017.\nSon idée clé : l'attention, qui permet à chaque mot de regarder tous les autres mots de la phrase.\nBERT est un Transformer pré-entraîné sur d'énormes quantités de texte en devinant des mots masqués ([MASK]).\nOn l'adapte ensuite (fine-tuning) à une tâche précise, comme le sentiment sur SST-2.\nDistilBERT est une version plus petite et plus rapide, idéale pour tes expériences sur un PC.",
+          "example": "BERT pré-entraîné : « Le chat [MASK] sur le tapis » → « dort ». Ce même mécanisme sert à proposer des substitutions (attaque BAE).",
+          "terms": [["attention", "attention"], ["pre-training", "pré-entraînement"], ["fine-tuning", "ajustement fin"], ["masked language model", "modèle de langue masqué"]],
+          "quiz": {
+            "question": "Qu'est-ce que le fine-tuning ?",
+            "options": ["Adapter un modèle pré-entraîné à une tâche précise", "Supprimer des couches du modèle", "Attaquer le modèle avec des synonymes"],
+            "answer": 0,
+            "explain": "On part d'un modèle pré-entraîné (BERT) et on l'ajuste sur la tâche voulue (ex. SST-2)."
+          }
+        }
+      ]
+    },
+    {
+      "id": "m4",
+      "emoji": "⚔️",
+      "title": "Les attaques adversariales",
+      "intro": "Une attaque adversariale modifie légèrement une entrée pour tromper un modèle, sans tromper un humain.",
+      "lessons": [
+        {
+          "id": "m4l1",
+          "title": "C'est quoi un exemple adversarial ?",
+          "content": "On part d'un texte x bien classé par le modèle f.\nOn cherche x′, très proche de x pour un humain, tel que f(x′) ≠ f(x) : c'est un exemple adversarial.\nFormellement : minimiser la distance d(x, x′) sous la contrainte f(x′) ≠ f(x) et sim(x, x′) ≥ τ.\nUne attaque non ciblée accepte n'importe quelle autre classe ; une attaque ciblée vise une classe précise.\nTon cahier des charges formalise une attaque non ciblée.",
+          "example": "x = « The movie was terrific » (positif) → x′ = « The movie was terrifying » (négatif) : une seule modification.",
+          "terms": [["adversarial example", "exemple adversarial"], ["untargeted attack", "attaque non ciblée"], ["targeted attack", "attaque ciblée"], ["perturbation", "perturbation"]],
+          "quiz": {
+            "question": "Une attaque non ciblée réussit quand…",
+            "options": ["le modèle prédit n'importe quelle classe différente de l'originale", "le modèle prédit une classe choisie à l'avance", "le texte devient illisible"],
+            "answer": 0,
+            "explain": "Non ciblée : f(x′) ≠ f(x), quelle que soit la nouvelle classe."
+          }
+        },
+        {
+          "id": "m4l2",
+          "title": "Les niveaux d'accès de l'attaquant",
+          "content": "White-box : l'attaquant voit tout (poids, gradients). C'est le cas le plus facile.\nScore-based (soft-label) : il ne voit que les probabilités de sortie. Ex. : TextFooler, PWWS.\nHard-label (decision-based, label-only) : il ne voit QUE la classe finale. C'est ton sujet.\nPlus l'accès est faible, plus l'attaque est réaliste (une API publique ne montre souvent que la décision) et difficile.\nAttention : beaucoup d'articles se disent « black-box » mais utilisent les probabilités ; vérifie toujours ce que l'attaque observe réellement.",
+          "example": "Une API de modération qui répond seulement « accepté / refusé » est un oracle hard-label.",
+          "terms": [["white-box", "boîte blanche"], ["black-box", "boîte noire"], ["score-based", "basé sur les scores"], ["decision-based", "basé sur la décision"]],
+          "quiz": {
+            "question": "TextFooler utilise les probabilités du modèle pour classer les mots. Son accès est donc…",
+            "options": ["hard-label", "score-based (soft-label)", "white-box"],
+            "answer": 1,
+            "explain": "TextFooler a besoin des scores : c'est une baseline score-based, pas une méthode hard-label."
+          }
+        },
+        {
+          "id": "m4l3",
+          "title": "Modifier un texte sans le casser",
+          "content": "On peut perturber au niveau du caractère (fautes : « gooood »), du mot (synonymes) ou de la phrase (paraphrase).\nLe texte doit rester naturel : sens préservé, grammaire correcte, lecture fluide.\nOn applique donc des filtres (gates) : même nature grammaticale (POS), similarité de sens, fluidité (perplexité).\nOn interdit souvent de toucher aux négations et aux entités nommées : « not » ou « Alger » changent le sens.\nUn bon filtre agit AVANT d'interroger le modèle, pour ne pas gaspiller de requêtes.",
+          "example": "Remplacer « good » par « goods » (pluriel) casse la grammaire : le filtre POS doit le refuser.",
+          "terms": [["constraint", "contrainte"], ["part-of-speech (POS)", "nature grammaticale"], ["fluency", "fluidité"], ["perplexity", "perplexité"]],
+          "quiz": {
+            "question": "Pourquoi appliquer les filtres avant d'interroger le modèle ?",
+            "options": ["Pour économiser le budget de requêtes", "Pour augmenter la perplexité", "Parce que le modèle l'exige"],
+            "answer": 0,
+            "explain": "Chaque requête coûte. Écarter tôt les candidats invalides économise le budget."
+          }
+        },
+        {
+          "id": "m4l4",
+          "title": "Mesurer une attaque",
+          "content": "ASR (Attack Success Rate) : part des exemples (bien classés au départ) que l'attaque réussit à faire basculer.\nRequêtes : combien d'appels au modèle il a fallu (moyenne, médiane). En hard-label, c'est LA mesure de coût.\nTaux de modification : pourcentage de mots changés (le protocole propose ≤ 20 %).\nSimilarité sémantique et fluidité : la qualité du texte, mesurées séparément.\nOn ne compare deux ASR que si datasets, modèles, budgets et contraintes sont les mêmes.",
+          "example": "Méthode A : ASR 85 % avec 900 requêtes en moyenne ; méthode B : 80 % avec 300 requêtes. B est souvent plus intéressante sous budget.",
+          "terms": [["attack success rate (ASR)", "taux de succès de l'attaque"], ["query", "requête"], ["perturbation rate", "taux de modification"]],
+          "quiz": {
+            "question": "En hard-label, quelle mesure représente le coût principal d'une attaque ?",
+            "options": ["La taille du modèle", "Le nombre de requêtes au modèle", "Le nombre de couches de BERT"],
+            "answer": 1,
+            "explain": "Sans scores, l'attaquant doit interroger beaucoup : le nombre de requêtes est le coût clé."
+          }
+        }
+      ]
+    },
+    {
+      "id": "m5",
+      "emoji": "🎯",
+      "title": "Le cœur du PFE : hard-label et WIR",
+      "intro": "Ici on assemble tout : un oracle qui ne donne que l'étiquette, un budget de requêtes, et la question de savoir quels mots modifier en premier.",
+      "lessons": [
+        {
+          "id": "m5l1",
+          "title": "L'oracle hard-label et le budget",
+          "content": "L'oracle est la fonction predict(texte) → étiquette. C'est le seul accès au modèle.\nDans le code du projet, BudgetedOracle compte CHAQUE appel, même ceux du classement des mots.\nQuand le budget (par ex. 500 requêtes) est épuisé, l'attaque s'arrête : échec.\nC'est ce qui rend la comparaison honnête : toutes les méthodes ont le même budget.\nAucun score, logit ou gradient ne doit « fuir » de l'adaptateur du modèle.",
+          "example": "Classer 20 mots par suppression coûte 20 requêtes avant même de chercher un remplacement.",
+          "terms": [["oracle", "oracle (boîte qui répond)"], ["query budget", "budget de requêtes"], ["leakage", "fuite d'information"]],
+          "quiz": {
+            "question": "Les requêtes utilisées pour classer les mots (WIR) comptent-elles dans le budget ?",
+            "options": ["Non, seulement la recherche compte", "Oui, toutes les requêtes comptent", "Seulement si l'attaque réussit"],
+            "answer": 1,
+            "explain": "Le protocole est strict : toute prédiction consomme une requête, WIR compris."
+          }
+        },
+        {
+          "id": "m5l2",
+          "title": "Word Importance Ranking : pourquoi classer les mots ?",
+          "content": "Une phrase de 20 mots a énormément de combinaisons de remplacements possibles.\nPlutôt que tout tester, on classe les mots du plus influent au moins influent : c'est le WIR.\nOn essaie ensuite de remplacer les mots dans cet ordre, en commençant par les plus importants.\nUn bon WIR fait réussir l'attaque plus vite, donc avec moins de requêtes.\nAvec des scores (soft-label), on mesure la baisse de probabilité ; en hard-label, ce signal n'existe pas.",
+          "example": "Dans « The plot was dull but the acting was brilliant », « dull » et « brilliant » pèsent plus que « the ».",
+          "terms": [["word importance ranking", "classement d'importance des mots"], ["saliency", "saillance"], ["search space", "espace de recherche"]],
+          "quiz": {
+            "question": "À quoi sert le WIR ?",
+            "options": ["À décider dans quel ordre modifier les mots", "À traduire le texte", "À entraîner le modèle"],
+            "answer": 0,
+            "explain": "Le WIR priorise les mots à modifier pour réussir avec moins de requêtes."
+          }
+        },
+        {
+          "id": "m5l3",
+          "title": "WIR sans score : suppression, masquage, vote",
+          "content": "Suppression : on retire le mot i et on demande la classe. Score 1 si la classe change, 0 sinon.\nMasquage : on remplace le mot par un marqueur neutre ([MASK] ou « unk »), même score binaire.\nProblème : souvent, retirer un seul mot ne change rien → tous les mots ont 0, le classement est inutile.\nVote de voisinage : on essaie m remplacements du mot i ; le score = proportion de voisins qui changent la classe. Plus fin, mais plus coûteux.\nContrôle aléatoire : un ordre au hasard, pour vérifier qu'une méthode fait mieux que le hasard.",
+          "example": "Avec m = 5 voisins, si 2 font basculer la classe, le mot obtient 0,4. Coût : 5 requêtes pour ce seul mot.",
+          "terms": [["deletion", "suppression"], ["masking", "masquage"], ["neighborhood voting", "vote de voisinage"], ["random baseline", "contrôle aléatoire"]],
+          "quiz": {
+            "question": "Quel est le principal défaut du WIR par suppression en hard-label ?",
+            "options": ["Il utilise les gradients", "Souvent aucun mot seul ne fait changer la classe, donc tous les scores valent 0", "Il est interdit par le protocole"],
+            "answer": 1,
+            "explain": "Le score binaire flip/no-flip est souvent 0 partout : c'est ce qui motive le vote de voisinage (hypothèse H1)."
+          }
+        },
+        {
+          "id": "m5l4",
+          "title": "Le pipeline complet d'une attaque",
+          "content": "1. Oracle : vérifier que le texte est bien classé au départ.\n2. WIR : classer les mots (suppression, masquage, vote ou aléatoire).\n3. Candidats : proposer des synonymes pour chaque mot (lexique, embeddings, BERT-MLM).\n4. Filtres : garder seulement les candidats valides (POS, sens, fluidité) sans requête.\n5. Recherche gloutonne : remplacer mot après mot jusqu'à ce que la classe bascule ou que le budget soit épuisé.\n6. Mesures : succès, requêtes, mots modifiés, similarité.",
+          "example": "Commande du projet : python -m pfe_hla demo --method neighborhood (démo hors ligne avec un oracle lexical).",
+          "terms": [["candidate generation", "génération de candidats"], ["greedy search", "recherche gloutonne"], ["pipeline", "chaîne de traitement"]],
+          "quiz": {
+            "question": "Pour isoler l'effet du WIR, que doivent partager toutes les méthodes comparées ?",
+            "options": ["Le même générateur de synonymes, les mêmes filtres et la même recherche", "Des budgets différents", "Des datasets différents"],
+            "answer": 0,
+            "explain": "Si on change plusieurs modules à la fois, on ne sait plus lequel explique le gain."
+          }
+        }
+      ]
+    },
+    {
+      "id": "m6",
+      "emoji": "🔬",
+      "title": "La méthode scientifique du PFE",
+      "intro": "Un PFE de recherche se juge sur la rigueur : question claire, sources tracées, expériences reproductibles, conclusions prudentes.",
+      "lessons": [
+        {
+          "id": "m6l1",
+          "title": "Question de recherche et hypothèses",
+          "content": "Une bonne question est précise et mesurable.\nTa question : à budget égal et avec un oracle label-only, le vote de voisinage classe-t-il mieux les mots que la suppression ou le masquage ?\nH0 (hypothèse nulle) : les méthodes ont la même efficacité.\nH1 : le vote de voisinage augmente le succès sous budget ou réduit les requêtes.\nUn résultat négatif (H0 non rejetée) est acceptable s'il est bien mesuré et expliqué.",
+          "example": "Mauvaise question : « comment attaquer BERT ? ». Bonne question : « quel WIR maximise l'ASR à 500 requêtes sur SST-2 ? »",
+          "terms": [["research question", "question de recherche"], ["hypothesis", "hypothèse"], ["null hypothesis", "hypothèse nulle"]],
+          "quiz": {
+            "question": "Un résultat négatif (aucune méthode meilleure) est-il acceptable dans un PFE ?",
+            "options": ["Non, il faut toujours prouver que sa méthode gagne", "Oui, s'il est correctement mesuré et expliqué", "Seulement en master 1"],
+            "answer": 1,
+            "explain": "La science valorise les mesures honnêtes, y compris négatives."
+          }
+        },
+        {
+          "id": "m6l2",
+          "title": "La revue systématique PRISMA",
+          "content": "PRISMA 2020 est une méthode pour faire une revue de littérature traçable.\n1. Identification : on cherche dans des bases (OpenAlex, arXiv, ACL…) avec des requêtes écrites à l'avance.\n2. Dédoublonnage, puis tri sur titre/résumé avec des critères d'inclusion (I1–I5) et d'exclusion (E1–E8).\n3. Lecture du texte intégral pour l'éligibilité finale.\n4. Le diagramme de flux montre combien d'articles restent à chaque étape. Dans ce projet, il est calculé automatiquement depuis la base, jamais tapé à la main.",
+          "example": "Sur Telegram, quand tu touches « ❌ Exclure → E2 », tu enregistres une décision PRISMA avec son motif.",
+          "terms": [["systematic review", "revue systématique"], ["inclusion criteria", "critères d'inclusion"], ["screening", "tri / criblage"], ["flow diagram", "diagramme de flux"]],
+          "quiz": {
+            "question": "Pourquoi écrire les requêtes et les critères AVANT de chercher ?",
+            "options": ["Pour que la sélection soit traçable et non biaisée", "Pour aller plus vite", "Parce que les bases l'exigent"],
+            "answer": 0,
+            "explain": "Un protocole figé à l'avance empêche de choisir les articles « qui arrangent »."
+          }
+        },
+        {
+          "id": "m6l3",
+          "title": "Reproductibilité",
+          "content": "Une expérience est reproductible si quelqu'un d'autre peut la relancer et obtenir les mêmes résultats.\nIl faut figer : la version du modèle, du dataset, des bibliothèques, les graines aléatoires (seeds) et la configuration.\nLe projet enregistre ces informations dans chaque fichier de résultats (JSONL) et dans la base.\nOn garde aussi les sorties individuelles, pas seulement les moyennes.\nLe protocole est versionné (hash SHA-256 + commit Git) pour prouver qu'il n'a pas changé en cours de route.",
+          "example": "Même seed = 42, même modèle, même budget → mêmes exemples attaqués et mêmes résultats.",
+          "terms": [["reproducibility", "reproductibilité"], ["random seed", "graine aléatoire"], ["version control", "gestion de versions"]],
+          "quiz": {
+            "question": "À quoi sert une graine aléatoire (seed) fixée ?",
+            "options": ["À obtenir les mêmes tirages aléatoires à chaque exécution", "À accélérer le modèle", "À cacher les résultats"],
+            "answer": 0,
+            "explain": "Une seed fixe rend les parties aléatoires de l'expérience répétables."
+          }
+        },
+        {
+          "id": "m6l4",
+          "title": "Comparer deux méthodes avec des statistiques",
+          "content": "Une différence d'ASR peut venir du hasard. Les statistiques disent si elle est fiable.\nIntervalle de confiance bootstrap (IC à 95 %) : on rééchantillonne les résultats pour estimer l'incertitude.\nTest de McNemar : compare deux méthodes sur les MÊMES exemples (succès/échec appariés).\nTest de Wilcoxon : compare le nombre de requêtes quand les deux méthodes réussissent.\nSi on fait beaucoup de comparaisons, on corrige (Holm) pour éviter les faux positifs.",
+          "example": "ASR 82 % [IC 77–87] contre 79 % [IC 74–84] : les intervalles se chevauchent, la différence n'est peut-être pas significative.",
+          "terms": [["confidence interval", "intervalle de confiance"], ["statistical significance", "significativité statistique"], ["paired test", "test apparié"]],
+          "quiz": {
+            "question": "Pourquoi utiliser McNemar pour comparer deux attaques ?",
+            "options": ["Parce qu'elles sont évaluées sur les mêmes exemples (données appariées)", "Parce qu'il calcule les gradients", "Parce qu'il remplace l'ASR"],
+            "answer": 0,
+            "explain": "McNemar est fait pour des réponses succès/échec appariées sur les mêmes exemples."
+          }
+        }
+      ]
+    }
+  ],
+  "redaction": [
+    {
+      "id": "r1",
+      "from": 1,
+      "to": 1,
+      "title": "1. Introduction et problématique",
+      "when": "Semaine 1 (brouillon), réécrite en dernier",
+      "goal": "Expliquer en 2 à 3 pages pourquoi le problème existe, ce qui manque dans la littérature et ce que tu vas apporter.",
+      "checklist": [
+        "Contexte : les classifieurs de texte sont déployés derrière des API qui ne donnent que la décision",
+        "Problème : estimer l'importance des mots sans score, logit ni gradient",
+        "Question de recherche et hypothèses H0/H1",
+        "Contributions attendues (liste de 3 points maximum)",
+        "Plan du mémoire (une phrase par chapitre)"
+      ],
+      "tip": "Écris un premier brouillon tôt pour clarifier ton idée, mais réécris l'introduction à la toute fin, quand tu connais tes résultats.",
+      "deliverable": "Brouillon d'introduction validé avec l'encadrant"
+    },
+    {
+      "id": "r2",
+      "from": 2,
+      "to": 3,
+      "title": "2. Méthodologie de la revue (PRISMA)",
+      "when": "Semaines 2 à 3",
+      "goal": "Décrire comment tu as cherché et sélectionné les articles, de façon qu'un autre étudiant puisse refaire exactement la même chose.",
+      "checklist": [
+        "Questions de recherche RQ1 à RQ5",
+        "Bases interrogées et date de la recherche",
+        "Requêtes exactes (copiées du protocole figé)",
+        "Critères I1–I5 et E1–E8",
+        "Diagramme PRISMA généré depuis le site (jamais tapé à la main)",
+        "Rôle des agents IA : suggestions vérifiées par un humain"
+      ],
+      "tip": "Signale honnêtement l'aide de l'IA : « le pré-tri a été suggéré par un modèle de langue, chaque décision a été prise par l'auteur ».",
+      "deliverable": "Section méthodologie de la revue + diagramme PRISMA"
+    },
+    {
+      "id": "r3",
+      "from": 4,
+      "to": 6,
+      "title": "3. État de l'art",
+      "when": "Semaines 4 à 6",
+      "goal": "Organiser la littérature par idées (pas article par article) : accès de l'attaquant, méthodes WIR, candidats, filtres, recherche, évaluation.",
+      "checklist": [
+        "Une fiche de lecture vérifiée pour chaque article inclus",
+        "Taxonomie (docs/03-taxonomie.md) remplie pour chaque article",
+        "Tableau comparatif : accès, WIR, datasets, modèles, budget, ASR",
+        "Une section par thème, avec citations (Auteur et al., année)",
+        "Paragraphe sur les lacunes : ce que personne n'a mesuré proprement",
+        "Chaque chiffre a sa page et sa citation vérifiée dans le PDF"
+      ],
+      "tip": "Utilise le brouillon d'état de l'art des agents comme point de départ, mais réécris-le avec tes mots et vérifie chaque citation.",
+      "deliverable": "Chapitre État de l'art (10 à 15 pages)"
+    },
+    {
+      "id": "r4",
+      "from": 7,
+      "to": 12,
+      "title": "4. Méthodologie expérimentale",
+      "when": "Semaines 7 à 12",
+      "goal": "Décrire précisément ton attaque et ton protocole pour qu'ils soient reproductibles.",
+      "checklist": [
+        "Modèle de menace : ce que l'attaquant sait, voit et peut demander",
+        "Oracle label-only et comptage de toutes les requêtes",
+        "Les 4 méthodes WIR comparées (suppression, masquage, vote, aléatoire)",
+        "Générateur de candidats, filtres et recherche communs",
+        "Dataset, modèle cible (version exacte), budgets, graines",
+        "Métriques et tests statistiques prévus"
+      ],
+      "tip": "Écris cette partie AVANT de lancer le benchmark final : c'est ton protocole figé.",
+      "deliverable": "Chapitre Méthodologie + protocole gelé (docs/02)"
+    },
+    {
+      "id": "r5",
+      "from": 13,
+      "to": 14,
+      "title": "5. Résultats",
+      "when": "Semaines 13 à 14",
+      "goal": "Présenter les mesures, rien que les mesures, avec tableaux et figures.",
+      "checklist": [
+        "Tableau principal : ASR, requêtes, taux de modification, similarité par méthode",
+        "Courbe succès en fonction du budget",
+        "Intervalles de confiance et tests statistiques",
+        "Ablations (nombre de voisins, filtres…)",
+        "Exemples d'attaques réussies ET ratées"
+      ],
+      "tip": "Ne commente pas encore : décris ce que montrent les chiffres. L'interprétation va dans la discussion.",
+      "deliverable": "Chapitre Résultats avec tableaux recalculables"
+    },
+    {
+      "id": "r6",
+      "from": 15,
+      "to": 15,
+      "title": "6. Discussion et limites",
+      "when": "Semaine 15",
+      "goal": "Interpréter les résultats, les relier à l'état de l'art et dire honnêtement ce qu'ils ne prouvent pas.",
+      "checklist": [
+        "Réponse à la question de recherche (H0 rejetée ou non)",
+        "Comparaison avec les résultats publiés (en signalant ce qui n'est pas comparable)",
+        "Menaces à la validité (dataset, modèle unique, budget…)",
+        "Considérations éthiques (docs/06)",
+        "Pistes de travaux futurs"
+      ],
+      "tip": "Une limite bien expliquée rassure le jury plus qu'un résultat trop beau.",
+      "deliverable": "Chapitre Discussion"
+    },
+    {
+      "id": "r7",
+      "from": 16,
+      "to": 16,
+      "title": "7. Conclusion, résumé et soutenance",
+      "when": "Semaine 16",
+      "goal": "Finaliser le mémoire et préparer la présentation.",
+      "checklist": [
+        "Conclusion (1 page) : question, méthode, résultat principal, perspective",
+        "Résumé en français et abstract en anglais",
+        "Bibliographie complète et cohérente",
+        "Relecture : figures numérotées, chiffres sourcés, orthographe",
+        "Slides de soutenance + démonstration du code"
+      ],
+      "tip": "Entraîne-toi à expliquer ton sujet en 2 minutes à quelqu'un qui ne connaît pas l'IA.",
+      "deliverable": "Mémoire final + slides + démo"
+    }
+  ],
+  "roadmap": [
+    {"from": 1, "to": 1, "goal": "Menace et questions de recherche figées", "exit": "Validation de l'encadrant", "tasks": ["Lire docs/05-questions-encadrant.md et préparer le rendez-vous"]},
+    {"from": 2, "to": 3, "goal": "Stratégie de recherche testée (PRISMA)", "exit": "Requêtes et critères versionnés", "tasks": ["Vérifier les requêtes du protocole v1", "Trier au moins 20 articles par jour avec le bot"]},
+    {"from": 4, "to": 5, "goal": "Tri et lecture des sources centrales", "exit": "Décisions avec motifs, aucun chiffre non sourcé", "tasks": ["Lire et corriger 2 fiches de lecture IA par semaine"]},
+    {"from": 6, "to": 6, "goal": "Taxonomie et tableau d'extraction", "exit": "Mêmes champs pour toutes les études", "tasks": ["Relire le comparatif des agents", "Commencer l'état de l'art"]},
+    {"from": 7, "to": 7, "goal": "Oracle label-only + compteur de requêtes", "exit": "Tests anti-fuite et budget qui passent", "tasks": ["Lancer python -m pfe_hla demo"]},
+    {"from": 8, "to": 8, "goal": "WIR suppression / masquage / aléatoire", "exit": "Sorties déterministes testées", "tasks": ["Relire src/pfe_hla/research/wir.py"]},
+    {"from": 9, "to": 9, "goal": "Vote de voisinage", "exit": "Coût WIR séparé et testé", "tasks": ["Comparer les coûts des trois WIR sur la démo"]},
+    {"from": 10, "to": 10, "goal": "Générateur de candidats et filtres communs", "exit": "Cas limites documentés", "tasks": ["Choisir le générateur avec l'encadrant"]},
+    {"from": 11, "to": 11, "goal": "Pilote sur 30 exemples", "exit": "Erreurs et temps évalués avant extension", "tasks": ["Lancer le benchmark pilote (SST-2, DistilBERT)"]},
+    {"from": 12, "to": 12, "goal": "Protocole final gelé", "exit": "Modèle, dataset, budgets et seuils fixés", "tasks": ["Figer docs/02 et le faire valider"]},
+    {"from": 13, "to": 14, "goal": "Benchmark principal", "exit": "Artefacts bruts sauvegardés", "tasks": ["Lancer les runs finaux avec 3 graines"]},
+    {"from": 15, "to": 15, "goal": "Statistiques, ablations, limites", "exit": "Tableaux recalculables", "tasks": ["Calculer IC bootstrap et tests McNemar/Wilcoxon"]},
+    {"from": 16, "to": 16, "goal": "Rapport et démonstration", "exit": "Code, rapport et slides cohérents", "tasks": ["Relecture finale et répétition de la soutenance"]}
+  ]
+}

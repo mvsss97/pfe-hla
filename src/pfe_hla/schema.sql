@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS search_run_details (
     run_id INTEGER PRIMARY KEY REFERENCES search_runs(id) ON DELETE CASCADE,
     executed_query TEXT NOT NULL,
     request_url TEXT NOT NULL,
-    run_kind TEXT NOT NULL CHECK (run_kind IN ('review', 'pilot', 'watch'))
+    run_kind TEXT NOT NULL CHECK (run_kind IN ('review', 'pilot', 'watch')),
+    protocol_version TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_search_run_kind ON search_run_details(run_kind);
@@ -176,6 +177,95 @@ CREATE TABLE IF NOT EXISTS telegram_state (
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- Schema v2: frozen protocol versions, AI assistance and the Telegram triage loop.
+-- AI rows are suggestions or drafts; they never replace a human screening event.
+
+CREATE TABLE IF NOT EXISTS protocol_versions (
+    version TEXT PRIMARY KEY,
+    sha256 TEXT NOT NULL,
+    git_commit TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'provisional' CHECK (
+        status IN ('provisional', 'validated', 'retired')
+    ),
+    frozen_at TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS ai_screening (
+    id INTEGER PRIMARY KEY,
+    paper_id INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+    decision TEXT NOT NULL CHECK (decision IN ('include', 'exclude', 'uncertain')),
+    reason_code TEXT,
+    access_regime TEXT NOT NULL DEFAULT 'unknown',
+    contribution_type TEXT NOT NULL DEFAULT 'other',
+    relevance INTEGER NOT NULL DEFAULT 0 CHECK (relevance BETWEEN 0 AND 5),
+    confidence REAL NOT NULL DEFAULT 0 CHECK (confidence BETWEEN 0 AND 1),
+    rationale TEXT NOT NULL,
+    model TEXT NOT NULL DEFAULT '',
+    prompt_version TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_screening_paper ON ai_screening(paper_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS triage_events (
+    id INTEGER PRIMARY KEY,
+    paper_id INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+    decision TEXT NOT NULL CHECK (decision IN ('include', 'exclude', 'uncertain', 'later')),
+    reason_code TEXT,
+    channel TEXT NOT NULL DEFAULT 'telegram',
+    event_ref TEXT NOT NULL DEFAULT '',
+    decided_at TEXT NOT NULL,
+    carried_event_id INTEGER REFERENCES screening_events(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_triage_paper ON triage_events(paper_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS reading_queue (
+    paper_id INTEGER PRIMARY KEY REFERENCES papers(id) ON DELETE CASCADE,
+    priority INTEGER NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL DEFAULT '',
+    queued_at TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT NOT NULL DEFAULT '',
+    done_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS paper_sheets (
+    paper_id INTEGER PRIMARY KEY REFERENCES papers(id) ON DELETE CASCADE,
+    sheet_json TEXT NOT NULL,
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('full_text', 'abstract')),
+    document_sha256 TEXT NOT NULL DEFAULT '',
+    checks_json TEXT NOT NULL DEFAULT '{}',
+    model TEXT NOT NULL DEFAULT '',
+    prompt_version TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS synthesis (
+    id INTEGER PRIMARY KEY,
+    content_json TEXT NOT NULL,
+    paper_ids_json TEXT NOT NULL DEFAULT '[]',
+    model TEXT NOT NULL DEFAULT '',
+    prompt_version TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+    id INTEGER PRIMARY KEY,
+    task TEXT NOT NULL,
+    target TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL CHECK (status IN ('ok', 'error', 'skipped')),
+    model TEXT NOT NULL DEFAULT '',
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL,
+    detail TEXT NOT NULL DEFAULT '',
+    started_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_runs_started ON agent_runs(started_at DESC);
 
 CREATE TABLE IF NOT EXISTS experiments (
     id INTEGER PRIMARY KEY,
