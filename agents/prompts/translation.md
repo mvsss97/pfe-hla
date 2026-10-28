@@ -16,7 +16,8 @@ la première fois, par exemple « boîte noire (black-box) ». Recopie exactemen
 
 Glossaire imposé (vocabulaire usuel des articles français du domaine) :
 
-- adversarial attack / example → attaque / exemple **adversarial(e)** (jamais « contradictoire »)
+- adversarial attack / example → attaque adversariale / exemple adversarial (accord normal :
+  adversariaux, adversariales ; jamais « contradictoire »)
 - hard-label → étiquette seule (hard-label) ; soft-label / score-based → à scores (soft-label)
 - black-box / white-box → boîte noire / boîte blanche
 - query, query budget → requête, budget de requêtes

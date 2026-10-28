@@ -278,18 +278,26 @@ function backgroundAt(context, dpr, points) {
   return best;
 }
 
-function fitText(node, startSize, height) {
-  let high = Math.max(startSize, 4);
-  node.style.fontSize = `${high}px`;
-  if (node.scrollHeight <= height + 1) return;
-  let low = 3;
-  for (let step = 0; step < 7; step += 1) {
+// Text is laid out at a comfortable size, then scaled down with a transform:
+// phone browsers enlarge tiny fonts ("font boosting"), not transformed text.
+const LAYOUT_FONT = 16;
+
+function fitText(inner, startSize, width, height) {
+  const fits = (size) => {
+    const factor = LAYOUT_FONT / size;
+    inner.style.width = `${width * factor}px`;
+    inner.style.transform = `scale(${1 / factor})`;
+    return inner.scrollHeight / factor <= height + 1;
+  };
+  let high = Math.max(startSize, 2);
+  if (fits(high)) return;
+  let low = 2;
+  for (let step = 0; step < 8; step += 1) {
     const middle = (low + high) / 2;
-    node.style.fontSize = `${middle}px`;
-    if (node.scrollHeight <= height + 1) low = middle;
+    if (fits(middle)) low = middle;
     else high = middle;
   }
-  node.style.fontSize = `${low}px`;
+  fits(low);
 }
 
 function paintFrench(entry) {
@@ -318,7 +326,9 @@ function paintFrench(entry) {
       [left - 2, top + height + 2],
       [left + width + 2, top + height + 2],
     ]);
-    const node = element("div", `block${block.heading ? " heading" : ""}${red + green + blue < 300 ? " dark" : ""}`, block.fr);
+    const node = element("div", `block${block.heading ? " heading" : ""}${red + green + blue < 300 ? " dark" : ""}`);
+    const inner = element("div", "block-text", block.fr);
+    node.append(inner);
     node.lang = "fr";
     node.title = block.text;
     node.style.left = `${left}px`;
@@ -330,11 +340,11 @@ function paintFrench(entry) {
       const showEnglish = !node.classList.contains("show-en");
       node.classList.toggle("show-en", showEnglish);
       node.lang = showEnglish ? "en" : "fr";
-      node.textContent = showEnglish ? block.text : block.fr;
-      fitText(node, block.size * state.scale * 0.95, height);
+      inner.textContent = showEnglish ? block.text : block.fr;
+      fitText(inner, block.size * state.scale * 0.95, width, height);
     });
     overlay.append(node);
-    fitText(node, block.size * state.scale * 0.95, height);
+    fitText(inner, block.size * state.scale * 0.95, width, height);
   }
 }
 

@@ -16,5 +16,5 @@ Pour **chaque** élément :
 Garde les noms propres et les sigles (CVE, LLM…) tels quels. N'invente aucun détail absent du
 texte. Recopie exactement l'`id`.
 
-Écris « adversarial(e) » (jamais « contradictoire ») pour *adversarial*, et « injection de prompt »
+Écris « adversarial », accordé normalement (adversariale, adversariaux ; jamais « contradictoire ») pour *adversarial*, et « injection de prompt »
 pour *prompt injection*.

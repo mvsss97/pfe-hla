@@ -1228,7 +1228,7 @@ const READER_PROMPT = [
   "Règles : traduction fidèle et naturelle, en français scientifique ; un bloc traduit par bloc reçu, même identifiant `i` ;",
   "ne fusionne pas et ne coupe pas les blocs ; garde inchangés les formules, variables, chiffres, citations ([12], (Jin et al., 2020)), URL, noms de méthodes, de modèles et de jeux de données ;",
   "un bloc qui n'est pas du texte anglais (équation, nombre, code, nom propre seul) est recopié tel quel.",
-  "Glossaire : adversarial → adversarial(e) (jamais « contradictoire ») ; hard-label → étiquette seule (hard-label) ; black-box → boîte noire ; query → requête ;",
+  "Glossaire : adversarial → adversarial, accordé normalement (adversariale, adversariaux, adversariales ; jamais « contradictoire ») ; hard-label → étiquette seule (hard-label) ; black-box → boîte noire ; query → requête ;",
   "word importance ranking → classement d'importance des mots ; attack success rate → taux de succès de l'attaque ; robustness → robustesse ; embedding → plongement (embedding).",
 ].join(" ");
 
