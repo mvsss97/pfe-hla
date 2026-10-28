@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {"type": "string"},
+          "titre_fr": {"type": "string"},
+          "resume_fr": {"type": "string"}
+        },
+        "required": ["key", "titre_fr", "resume_fr"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["items"],
+  "additionalProperties": false
+}

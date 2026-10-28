@@ -371,7 +371,7 @@ def command_export(args: argparse.Namespace) -> int:
     site_url = args.site_url or settings.site_url
     with transaction(settings.database) as connection:
         path = export_public_state(connection, output, site_url=site_url)
-    print(f"Public dashboard data written to {path} (+ sheets.json, bot.json).")
+    print(f"Dashboard data written to {path} (+ sheets, news, reader and bot JSON).")
     return 0
 
 
@@ -545,6 +545,8 @@ def command_agents(args: argparse.Namespace) -> int:
             batch_size=args.batch_size,
             max_read=args.max_read,
             synthesis=not args.no_synthesis,
+            max_news=args.max_news,
+            max_translate=args.max_translate,
         )
         summary = run_agents(connection, runner, workdir=ROOT / args.workdir, plan=plan)
         connection.commit()
@@ -554,7 +556,47 @@ def command_agents(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_supervisor_import(args: argparse.Namespace) -> int:
+    from pfe_hla.supervisor import ScholarlyResolver, import_reading_list
+
+    settings = _settings()
+    _ensure_db(settings)
+    resolver = None if args.offline else ScholarlyResolver(email=settings.openalex_email)
+    try:
+        with transaction(settings.database) as connection:
+            report = import_reading_list(connection, ROOT / args.file, resolver)
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"Supervisor list not imported: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Supervisor list: {report.total} entries, {report.resolved} matched in OpenAlex/arXiv, "
+        f"{report.queued} queued for the reading agent."
+    )
+    if report.unresolved:
+        print("Kept with curated metadata only: " + ", ".join(report.unresolved))
+    return 0
+
+
+def command_news_collect(args: argparse.Namespace) -> int:
+    from pfe_hla.news import collect_news
+
+    settings = _settings()
+    _ensure_db(settings)
+    connection = connect(settings.database)
+    try:
+        report = collect_news(connection, since_days=args.days)
+    finally:
+        connection.close()
+    for name, count in report.inserted.items():
+        print(f"{name}: {count} new item(s)")
+    for name, error in report.errors.items():
+        print(f"{name}: skipped ({error})")
+    print(f"AI-security watch: {report.total} new item(s).")
+    return 0
+
+
 def command_notify(args: argparse.Namespace) -> int:
+    from pfe_hla.news import fresh_alerts
     from pfe_hla.sync import notify_worker
 
     settings = _settings()
@@ -591,15 +633,22 @@ def command_notify(args: argparse.Namespace) -> int:
         synthesis = connection.execute(
             "SELECT COUNT(*) AS n FROM synthesis WHERE created_at >= ?", (since,)
         ).fetchone()["n"]
+        news = connection.execute(
+            "SELECT COUNT(*) AS n FROM news_items WHERE collected_at >= ?", (since,)
+        ).fetchone()["n"]
         summary = {
             "since": since,
             "finishedAt": utc_now(),
+            "light": args.light,
             "newPapers": int(new_papers),
             "suggestions": int(suggestions),
             "sheets": sheets,
             "synthesis": bool(synthesis),
             "agentErrors": int(runs["errors"] or 0),
             "agentsSkipped": runs["skip_reason"] or "",
+            "news": int(news),
+            # The worker remembers which alerts it already pushed (keyed by source:id).
+            "alerts": fresh_alerts(connection),
             "prisma": compute_prisma_counts(connection).as_dict(),
             "runUrl": os.environ.get("RUN_URL", ""),
         }
@@ -911,6 +960,15 @@ def build_parser() -> argparse.ArgumentParser:
     agents.add_argument("--max-read", type=int, default=3)
     agents.add_argument("--no-synthesis", action="store_true")
     agents.add_argument(
+        "--max-news", type=int, default=30, help="news items summarised in French (0 = none)"
+    )
+    agents.add_argument(
+        "--max-translate",
+        type=int,
+        default=48,
+        help="papers whose title/abstract get a French version (0 = none)",
+    )
+    agents.add_argument(
         "--model",
         default=os.environ.get("AGENT_MODEL", ""),
         help="model id, or a comma-separated fallback chain for Gemini",
@@ -926,7 +984,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     notify = sub.add_parser("notify", help="send the pipeline summary to the Telegram worker")
     notify.add_argument("--since", required=True, help="ISO timestamp of the run start")
+    notify.add_argument(
+        "--light", action="store_true", help="news-only run: the bot stays quiet unless alerted"
+    )
     notify.set_defaults(func=command_notify)
+
+    supervisor = sub.add_parser(
+        "supervisor-import", help="import the supervisor's reading list (bibliographic data)"
+    )
+    supervisor.add_argument("--file", default="data/supervisor_reading_list.json")
+    supervisor.add_argument(
+        "--offline", action="store_true", help="no OpenAlex/arXiv lookup (curated metadata only)"
+    )
+    supervisor.set_defaults(func=command_supervisor_import)
+
+    news = sub.add_parser("news-collect", help="collect AI-security news, flaws and repositories")
+    news.add_argument("--days", type=positive_int, default=10, help="look-back window")
+    news.set_defaults(func=command_news_collect)
 
     papers = sub.add_parser("papers", help="list papers")
     papers.add_argument("--status")

@@ -26,14 +26,17 @@
         <a href="#bibliotheque" data-route="bibliotheque"><span>02</span>Bibliothèque</a>
         <a href="#prisma" data-route="prisma"><span>03</span>PRISMA</a>
         <a href="#agents" data-route="agents"><span>04</span>Agents IA</a>
-        <a href="#fiches" data-route="fiches"><span>05</span>Fiches de lecture</a>
-        <a href="#comparatif" data-route="comparatif"><span>06</span>Comparatif</a>
-        <a href="#taxonomie" data-route="taxonomie"><span>07</span>Taxonomie</a>
-        <a href="#experiences" data-route="experiences"><span>08</span>Expériences WIR</a>
-        <a href="#redaction" data-route="redaction"><span>09</span>Rédaction</a>
-        <a href="#english" data-route="english"><span>10</span>English Lab</a>
-        <a href="#guide" data-route="guide"><span>11</span>Guide</a>
-        <a href="learning.html"><span>12</span>Apprentissage (Cours)</a>
+        <a href="#encadrant" data-route="encadrant"><span>05</span>Encadrant</a>
+        <a href="#fiches" data-route="fiches"><span>06</span>Fiches de lecture</a>
+        <a href="#comparatif" data-route="comparatif"><span>07</span>Comparatif</a>
+        <a href="#taxonomie" data-route="taxonomie"><span>08</span>Taxonomie</a>
+        <a href="#experiences" data-route="experiences"><span>09</span>Expériences WIR</a>
+        <a href="#redaction" data-route="redaction"><span>10</span>Rédaction</a>
+        <a href="#english" data-route="english"><span>11</span>English Lab</a>
+        <a href="#actus" data-route="actus"><span>12</span>Actus sécu IA</a>
+        <a href="#guide" data-route="guide"><span>13</span>Guide</a>
+        <a href="learning.html"><span>14</span>Apprentissage (Cours)</a>
+        <a href="reader.html"><span>15</span>Lecteur PDF bilingue</a>
       </nav>
 
       <div class="sidebar-foot">
@@ -271,11 +274,11 @@
 
         <section class="view" id="agents" data-view="agents" aria-labelledby="agents-title" hidden>
           <div class="page-intro slim">
-            <div><p class="eyebrow"><span></span>Travail automatique · 2 passages par jour</p><h1 id="agents-title">Agents IA</h1><p>Des agents Claude Code tournent dans le cloud (GitHub Actions), même quand ton PC est éteint : ils collectent, pré-trient, lisent les PDF, écrivent les fiches et comparent les articles. Toi, tu décides sur Telegram.</p></div>
+            <div><p class="eyebrow"><span></span>Travail automatique · 2 passages complets + 6 légers par jour</p><h1 id="agents-title">Agents IA</h1><p>Des agents IA (Gemini, clé gratuite) tournent dans le cloud (GitHub Actions), même quand ton PC est éteint : ils collectent, pré-trient, lisent les PDF, écrivent les fiches, comparent les articles et surveillent l’actualité sécurité de l’IA. Toi, tu décides sur Telegram.</p></div>
             <span class="status neutral large" id="agents-status">Aucun passage</span>
           </div>
 
-          <div class="truth-banner compact" id="agents-token" role="note" hidden><span class="truth-icon" aria-hidden="true">!</span><p><strong>Agents IA en attente de leur jeton Claude.</strong> La collecte fonctionne, mais le tri, la lecture et la synthèse IA démarreront quand le secret <code>CLAUDE_CODE_OAUTH_TOKEN</code> sera ajouté : sur le PC, lancer <code>claude setup-token</code>, puis <code>gh secret set CLAUDE_CODE_OAUTH_TOKEN</code>.</p></div>
+          <div class="truth-banner compact" id="agents-token" role="note" hidden><span class="truth-icon" aria-hidden="true">!</span><p><strong>Agents IA en attente de la clé Gemini.</strong> La collecte et la veille fonctionnent, mais le tri, la lecture, la synthèse et les résumés d’actus démarreront quand la clé sera dans les secrets GitHub : sur le PC, dans le dossier du projet, lancer une seule fois <code>powershell -ExecutionPolicy Bypass -File scripts\setup-secrets.ps1</code>.</p></div>
 
           <div class="metric-grid" aria-label="Production des agents">
             <article class="metric-card"><span>Pré-triés par l’IA</span><strong id="agents-screened">0</strong><small>suggestions, jamais des décisions</small></article>
@@ -289,18 +292,21 @@
             <article class="panel agent-card"><p class="overline">Agent 2</p><h2>Trieur</h2><p>Lit titres et résumés et propose garder / exclure (I1–I5, E1–E8) avec un motif et une pertinence 0–5. Tu confirmes d’un geste sur Telegram.</p><span class="status cyan" id="agent-screening">—</span></article>
             <article class="panel agent-card"><p class="overline">Agent 3</p><h2>Lecteur</h2><p>Télécharge le PDF, lit tout le texte et écrit une fiche complète. Chaque citation et chaque chiffre est ensuite recherché mot pour mot dans le PDF.</p><span class="status cyan" id="agent-reading">—</span></article>
             <article class="panel agent-card"><p class="overline">Agent 4</p><h2>Synthèse</h2><p>Compare toutes les fiches : tableau comparatif, incohérences, lacunes, pistes de contribution et brouillon d’état de l’art.</p><span class="status cyan" id="agent-synthesis">—</span></article>
+            <article class="panel agent-card"><p class="overline">Agent 5</p><h2>Veilleur</h2><p>Surveille les failles (CVE, avis GitHub, CISA), les nouveaux dépôts GitHub/GitLab, les incidents IA, la presse et arXiv ; résume chaque actu en français et déclenche une alerte Telegram pour une faille grave liée à l’IA.</p><span class="status cyan" id="agent-news">—</span></article>
+            <article class="panel agent-card"><p class="overline">Agent 6</p><h2>Traducteur</h2><p>Traduit en français le titre et le résumé de chaque article, et les définitions du vocabulaire : le français s’affiche sous l’anglais, sur le site et dans le bot. Le lecteur PDF bilingue traduit aussi les articles entiers, page par page, à la même place.</p><span class="status cyan" id="agent-translation">—</span></article>
           </div>
 
           <article class="panel">
             <div class="panel-head"><div><p class="overline">Chaîne complète</p><h2>Ce qui se passe à chaque passage</h2></div></div>
             <ol class="flowline">
-              <li><b>Réveil</b><small>GitHub Actions, ~06 h et ~16 h</small></li>
+              <li><b>Réveil</b><small>GitHub Actions, ~06 h et ~16 h (+ veille toutes les ~3 h)</small></li>
               <li><b>Tes décisions</b><small>récupérées depuis Telegram</small></li>
               <li><b>Collecte</b><small>OpenAlex + arXiv</small></li>
               <li><b>Tri IA</b><small>suggestions PRISMA</small></li>
               <li><b>PDF</b><small>accès ouvert</small></li>
               <li><b>Lecture IA</b><small>fiche + vérification</small></li>
               <li><b>Synthèse</b><small>comparatif</small></li>
+              <li><b>Veille</b><small>failles, dépôts, incidents</small></li>
               <li><b>Site</b><small>Cloudflare Pages</small></li>
               <li><b>Bot</b><small>t’envoie les nouveautés</small></li>
             </ol>
@@ -311,6 +317,42 @@
             <div class="table-wrap"><table><thead><tr><th>Date (UTC)</th><th>Agent</th><th>Cible</th><th>Statut</th><th>Modèle</th><th>Durée</th><th>Détail</th></tr></thead><tbody id="agents-log"><tr><td colspan="7">Aucun passage enregistré.</td></tr></tbody></table></div>
             <p class="microcopy">Chaque appel d’agent est enregistré dans la base SQLite (table <code>agent_runs</code>) et exporté ici. Les suggestions de l’IA ne sont jamais comptées comme décisions dans PRISMA.</p>
           </article>
+        </section>
+
+        <section class="view" id="encadrant" data-view="encadrant" aria-labelledby="encadrant-title" hidden>
+          <div class="page-intro slim">
+            <div><p class="eyebrow"><span></span>Documents donnés par l’encadrant</p><h1 id="encadrant-title">Encadrant</h1><p>Ton encadrant t’a donné sa thèse (état de l’art), une liste d’articles hard-label à lire et à discuter avec lui, et une présentation. Ici : la liste des articles avec leur état de lecture par l’agent, un plan pour lire la thèse et les questions à lui poser.</p></div>
+            <div class="page-count"><strong id="supervisor-count">0</strong><span>articles</span></div>
+          </div>
+
+          <div class="truth-banner compact" role="note"><span class="truth-icon" aria-hidden="true">🔒</span><p><strong>Documents privés.</strong> La thèse, le document « Related work » et la présentation restent sur ton PC : ils ne sont ni dans le dépôt GitHub ni sur ce site public. Seules les références bibliographiques d’articles publiés sont utilisées ici.</p></div>
+
+          <div class="metric-grid" aria-label="Lecture de la liste de l’encadrant">
+            <article class="metric-card"><span>Fiches écrites</span><strong id="supervisor-sheets">0</strong><small>lues en entier par l’agent</small></article>
+            <article class="metric-card"><span>En file de lecture</span><strong id="supervisor-queued">0</strong><small>priorités 1 et 2 d’abord</small></article>
+            <article class="metric-card"><span>Sans PDF libre</span><strong id="supervisor-nopdf">0</strong><small>à demander à l’encadrant</small></article>
+            <article class="metric-card accent"><span>Thèse</span><strong id="thesis-progress">0 / 0</strong><small>parties lues (cet appareil)</small></article>
+          </div>
+
+          <article class="panel">
+            <div class="panel-head"><div><p class="overline">À lire et discuter</p><h2>Articles conseillés</h2></div>
+              <label class="inline-select"><span>Famille</span><select id="supervisor-family"><option value="all">Toutes</option></select></label>
+            </div>
+            <div class="table-wrap"><table><thead><tr><th>Priorité</th><th>Article</th><th>Famille</th><th>Ce qu’il apporte</th><th>Lecture</th><th>Liens</th></tr></thead><tbody id="supervisor-body"><tr><td colspan="6">La liste sera importée au prochain passage des agents.</td></tr></tbody></table></div>
+            <p class="microcopy">✅ fiche écrite · ⏳ l’agent lecteur s’en occupe · 📕 pas de PDF en accès libre (demande-le à l’encadrant ou à la bibliothèque) · ▫️ lecture non demandée (priorité 3).</p>
+          </article>
+
+          <div class="guide-grid">
+            <article class="panel">
+              <div class="panel-head"><div><p class="overline">Le PDF est sur ton PC</p><h2>Plan de lecture de la thèse</h2></div><a class="text-button" href="learning.html#these">Leçons associées</a></div>
+              <ul class="step-checklist" id="thesis-plan"><li><span class="microcopy">Chargement…</span></li></ul>
+            </article>
+            <article class="panel">
+              <p class="overline">Préparer le rendez-vous</p><h2>Questions à poser</h2>
+              <ol class="guide-steps-list" id="supervisor-questions"><li>Chargement…</li></ol>
+              <p class="microcopy">Note ses réponses dans <code>docs/05-questions-encadrant.md</code> : elles fixent le cadre du PFE.</p>
+            </article>
+          </div>
         </section>
 
         <section class="view" id="fiches" data-view="fiches" aria-labelledby="fiches-title" hidden>
@@ -485,8 +527,11 @@
                 <p class="prompt">Dites la définition française à voix haute, puis révélez la réponse.</p>
                 <div class="answer" id="word-answer" hidden>
                   <p><span>FR</span><strong id="word-fr">budget de requêtes</strong></p>
+                  <p id="word-definition-row" hidden><span>🇬🇧</span><span id="word-definition"></span></p>
+                  <p id="word-definition-fr-row" hidden><span>🇫🇷</span><span id="word-definition-fr"></span></p>
                   <p><span>Syn.</span><span id="word-synonyms">query limit · request allowance</span></p>
                   <blockquote id="word-example">The attack must stay within a strict query budget.</blockquote>
+                  <p class="fr-line" id="word-example-fr" hidden></p>
                 </div>
               </div>
               <button class="primary-button reveal-button" type="button" id="reveal-answer">Révéler la réponse <kbd>Espace</kbd></button>
@@ -505,6 +550,24 @@
               <button class="text-button danger-text" type="button" id="reset-vocab">Réinitialiser ma progression</button>
             </aside>
           </div>
+        </section>
+
+        <section class="view" id="actus" data-view="actus" aria-labelledby="actus-title" hidden>
+          <div class="page-intro slim">
+            <div><p class="eyebrow"><span></span>Agent veilleur · ~8 passages par jour</p><h1 id="actus-title">Actus sécurité de l’IA</h1><p>Nouvelles failles (CVE, avis GitHub, failles exploitées CISA), nouveaux dépôts GitHub/GitLab sur la sécurité de l’IA, incidents IA, presse spécialisée et articles arXiv. Les résumés en français sont écrits par l’agent veilleur.</p></div>
+            <div class="page-count"><strong id="news-count">0</strong><span>actus</span></div>
+          </div>
+
+          <div class="filter-bar" aria-label="Filtrer les actus">
+            <label class="search-field"><span>Rechercher</span><input id="news-search" type="search" placeholder="LLM, CVE, LangChain…" autocomplete="off"></label>
+            <label><span>Type</span><select id="news-kind"><option value="all">Tout</option><option value="vulnerability">Failles</option><option value="repo">Dépôts</option><option value="incident">Incidents IA</option><option value="article">Presse</option><option value="paper">Recherche</option></select></label>
+            <label><span>Importance</span><select id="news-severity"><option value="all">Toutes</option><option value="alert">Alertes</option><option value="notable">Importantes et alertes</option></select></label>
+          </div>
+
+          <div class="seed-note" role="note"><b>🚨 Alerte</b> = faille critique, ou activement exploitée, qui touche un logiciel d’IA : le bot te prévient tout de suite (sauf la nuit). <b>🔸 Important</b> = à lire. Les autres actus arrivent dans le résumé Telegram de 18:00.</div>
+
+          <div class="paper-grid" id="news-grid"></div>
+          <div class="empty-state" id="news-empty"><span>∅</span><h2>Pas encore d’actus</h2><p>L’agent veilleur publiera ici les premières actus à son prochain passage.</p></div>
         </section>
 
         <section class="view" id="guide" data-view="guide" aria-labelledby="guide-title" hidden>
@@ -535,9 +598,9 @@
 
             <article class="panel telegram-card">
               <div class="panel-head"><div><p class="overline">Compagnon mobile</p><h2>Bot Telegram</h2></div><span class="status cyan">En ligne 24 h/24</span></div>
-              <p>Le bot t’écrit tout seul : <b>08:30</b> plan du jour et leçon, <b>13:30</b> session de tri, <b>20:00</b> quiz et mots d’anglais, plus un message quand les agents ont écrit une nouvelle fiche. Tu réponds avec les boutons.</p>
+              <p>Le bot t’écrit tout seul : <b>08:00</b> plan du jour et leçon, <b>10:00</b> et <b>15:30</b> pause anglais, <b>13:00</b> session de tri, <b>18:00</b> actus sécurité IA, <b>20:00</b> quiz et mots d’anglais, une alerte immédiate en cas de faille grave liée à l’IA, et un message quand les agents ont écrit une nouvelle fiche. Tu réponds avec les boutons.</p>
               <div class="security-callout"><strong>Comment ça marche</strong><p>Tes décisions (garder, exclure + motif, incertain…) sont mises en file d’attente puis appliquées par le pipeline dans le journal PRISMA. Ce site n’enregistre et n’utilise aucun token.</p></div>
-              <ul class="command-list"><li><code>/menu</code><span>toutes les sections en boutons</span></li><li><code>/aujourdhui</code><span>plan du jour, nouveautés, tâches</span></li><li><code>/tri</code><span>trier les articles avec l’avis de l’IA</span></li><li><code>/fiches</code><span>fiches de lecture des agents</span></li><li><code>/prisma</code><span>compteurs PRISMA</span></li><li><code>/anglais</code><span>mots à réviser (répétition espacée)</span></li><li><code>/apprendre</code><span>leçon du jour + quiz</span></li><li><code>/redaction</code><span>étapes du mémoire</span></li><li><code>/plan</code><span>objectif de la semaine</span></li><li><code>/agents</code><span>état des agents IA</span></li><li><code>/chercher &lt;mots&gt;</code><span>chercher dans la bibliothèque</span></li><li><code>/reglages</code><span>choisir les notifications</span></li></ul>
+              <ul class="command-list"><li><code>/menu</code><span>toutes les sections en boutons</span></li><li><code>/aujourdhui</code><span>plan du jour, nouveautés, tâches</span></li><li><code>/tri</code><span>trier les articles avec l’avis de l’IA</span></li><li><code>/fiches</code><span>fiches de lecture des agents</span></li><li><code>/prisma</code><span>compteurs PRISMA</span></li><li><code>/anglais</code><span>mots à réviser (répétition espacée)</span></li><li><code>/apprendre</code><span>leçon du jour + quiz</span></li><li><code>/redaction</code><span>étapes du mémoire</span></li><li><code>/plan</code><span>objectif de la semaine</span></li><li><code>/agents</code><span>état des agents IA</span></li><li><code>/encadrant</code><span>articles conseillés par l’encadrant</span></li><li><code>/these</code><span>plan de lecture de la thèse</span></li><li><code>/actus</code><span>failles, dépôts, incidents IA</span></li><li><code>/chercher &lt;mots&gt;</code><span>chercher dans la bibliothèque</span></li><li><code>/reglages</code><span>choisir les notifications</span></li></ul>
               <a class="primary-button link-button" href="https://t.me/PFE_MN_bot" target="_blank" rel="noopener noreferrer">Ouvrir @PFE_MN_bot</a>
               <p class="microcopy">Les anciennes commandes (/today, /papers, /more, /words, /stats, /search, /site, /help) fonctionnent toujours.</p>
             </article>

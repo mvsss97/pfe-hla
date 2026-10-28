@@ -11,9 +11,9 @@ Le tableau de bord et le bot facilitent le travail ; ils ne sont pas présentés
 
 | Élément | Où | Rôle |
 |---|---|---|
-| Tableau de bord | <https://pfe-hla.pages.dev> (miroir : <https://mvsss97.github.io/pfe-hla/>) | Cockpit, Bibliothèque, PRISMA, **Agents IA**, **Fiches de lecture**, **Comparatif**, **Rédaction**, English Lab, cours |
-| Bot Telegram | [@PFE_MN_bot](https://t.me/PFE_MN_bot) (Cloudflare Worker) | t'écrit à 08:30, 13:30, 20:00 et après chaque passage des agents ; tri PRISMA par boutons, mots d'anglais, leçons + quiz, rédaction |
-| Agents IA | GitHub Actions, ~06:17 et ~15:47 (heure d'Alger) | collecte, tri IA, lecture des PDF, fiches vérifiées, synthèse — avec la clé **Gemini gratuite** |
+| Tableau de bord | <https://pfe-hla.pages.dev> (miroir : <https://mvsss97.github.io/pfe-hla/>) | Cockpit, Bibliothèque, PRISMA, **Agents IA**, **Encadrant**, **Fiches de lecture**, **Comparatif**, **Rédaction**, English Lab, **Actus sécu IA**, cours, **lecteur PDF bilingue** — anglais et français côte à côte partout |
+| Bot Telegram | [@PFE_MN_bot](https://t.me/PFE_MN_bot) (Cloudflare Worker, tick toutes les 30 min) | t'écrit à 08:00 (plan), 10:00 et 15:30 (pause anglais), 13:00 (tri), 18:00 (actus sécurité IA), 20:00 (bilan) ; alerte immédiate pour une faille grave liée à l'IA (pas la nuit) ; tri PRISMA, leçons + quiz, rédaction, liste et thèse de l'encadrant ; ouvre les articles dans le **lecteur bilingue** (mini-app Telegram) |
+| Agents IA | GitHub Actions : 2 passages complets (~06:17, ~15:47) + 6 passages légers | collecte, tri IA, lecture des PDF, fiches vérifiées, synthèse, **veille sécurité IA**, **traduction FR** — avec la clé **Gemini gratuite** |
 
 ### Ce que font les agents à chaque passage (`.github/workflows/daily.yml`)
 
@@ -22,7 +22,10 @@ Le tableau de bord et le bot facilitent le travail ; ils ne sont pas présentés
 3. **Trieur IA** : suggestions garder/exclure (I1–I5/E1–E8, pertinence 0–5). Ce ne sont jamais des décisions : tu confirmes sur Telegram (bouton « 🤖 Comme l'IA »).
 4. **Lecteur IA** : télécharge les PDF en accès ouvert (arXiv, ACL Anthology, OpenReview…), lit tout le texte et écrit une fiche ; chaque citation est recherchée mot pour mot dans le PDF (✓ / ≈ / ✗).
 5. **Synthèse IA** : comparatif, incohérences, lacunes et brouillon d'état de l'art.
-6. Publient le site (Cloudflare Pages + miroir GitHub Pages), sauvegardent la base chiffrée (branche `research-db`) et préviennent le bot.
+6. **Veilleur IA** : failles (avis GitHub, NVD, CISA KEV), nouveaux dépôts GitHub/GitLab, incidents (AI Incident Database), presse spécialisée et arXiv cs.CR ; résumés en français, alerte Telegram pour une faille critique ou exploitée qui touche un logiciel d'IA.
+7. **Traducteur IA** : titre et résumé de chaque article, définitions et exemples du vocabulaire en français, affichés sous l'anglais (site et bot).
+8. Importent la **liste d'articles de l'encadrant** (`data/supervisor_reading_list.json`, données bibliographiques seulement) : ses priorités 1 et 2 passent en tête de la file de lecture.
+9. Publient le site (Cloudflare Pages + miroir GitHub Pages), sauvegardent la base chiffrée (branche `research-db`) et préviennent le bot.
 
 Les consignes des agents sont lisibles dans `agents/prompts/` et leurs formats dans `agents/schemas/`. Le moteur par défaut est Gemini (`GEMINI_API_KEY`, niveau gratuit, chaîne de modèles avec relances si un modèle est saturé) ; Claude Code reste possible en option (`AGENT_BACKEND=claude`).
 
@@ -32,7 +35,15 @@ Les consignes des agents sont lisibles dans `agents/prompts/` et leurs formats d
 powershell -ExecutionPolicy Bypass -File scripts\setup-secrets.ps1
 ```
 
-Le script copie `GEMINI_API_KEY` de `.env` vers les secrets GitHub, crée le mot de passe de la sauvegarde chiffrée, protège le webhook Telegram par un secret privé et lance un premier passage.
+Le script copie `GEMINI_API_KEY` de `.env` vers les secrets GitHub **et vers le bot** (traduction du lecteur PDF), crée le mot de passe de la sauvegarde chiffrée, protège le webhook Telegram par un secret privé et lance un premier passage. Dans PowerShell, tape la commande **sans** le `!` (le `!` ne sert que dans la zone de saisie de Claude Code).
+
+### Lecteur PDF bilingue (`site/reader.html`)
+
+PDF.js (Mozilla, Apache-2.0, dans `site/vendor/pdfjs`) affiche la page telle quelle ; le texte de chaque paragraphe est extrait avec sa position (`site/reader-layout.js`), traduit par le worker (`/reader/translate`, Gemini gratuit, cache KV) et repeint en français **au même endroit** sur une copie de la page : colonnes, figures et formules ne bougent pas. Modes 🇬🇧 / 🇫🇷 / côte à côte ; toucher un paragraphe montre l'anglais. Seul le compte associé au bot peut l'utiliser (données de lancement de la mini-app Telegram, ou jeton signé envoyé par `/lecteur`). Le texte envoyé à Gemini (offre gratuite) peut être utilisé par Google : ne pas y ouvrir de document confidentiel.
+
+### Documents privés de l'encadrant
+
+La thèse, le document « Related work hard label » et la présentation restent sur le PC (motifs dans `.gitignore`) : le dépôt et le site sont publics. Seules les références d'articles publiés et des leçons écrites avec nos mots (modules « Thèse de l'encadrant » et « Attaques hard-label récentes ») sont publiées.
 
 ## État honnête
 

@@ -3,33 +3,65 @@
  *
  * - Webhook  : commands, persistent menu keyboard and inline buttons. Every
  *              command and button answers, even when data is missing.
- * - Cron     : the bot writes first — morning briefing, midday triage session,
- *              evening review (see [triggers] in wrangler.toml).
+ * - Cron     : one tick every 30 minutes; the bot writes first following
+ *              SCHEDULE (plan of the day, English breaks, triage, AI-security
+ *              news, evening review). A late tick still delivers a slot.
+ * - Alerts   : critical or exploited flaws touching AI software are pushed as
+ *              soon as the pipeline reports them (held during quiet hours).
  * - Pipeline : GitHub Actions pulls the decisions queued here (/api/events),
  *              acknowledges them once saved, and posts its run summary.
+ * - Reader   : the PDF reader (site/reader.html, opened as a Telegram mini app)
+ *              fetches PDFs through /reader/pdf and translates each page into
+ *              French through /reader/translate (Gemini free key, cached in KV).
+ *              Only the paired account can use it (Telegram initData or a signed
+ *              token sent by /lecteur).
  *
  * Data comes from the static site (data/bot.json, data/learning.json).
  * Decisions are queued in KV and applied by the Python pipeline through the
  * audited PRISMA functions — the bot never edits the research database itself.
  *
  * Secrets: TELEGRAM_BOT_TOKEN, TELEGRAM_PAIRING_CODE, optional PIPELINE_SECRET
- *          (defaults to the pairing code, already shared with GitHub) and
- *          optional TELEGRAM_WEBHOOK_SECRET (overrides the BOT_WEBHOOK_SECRET var).
+ *          (defaults to the pairing code, already shared with GitHub),
+ *          optional TELEGRAM_WEBHOOK_SECRET (overrides the BOT_WEBHOOK_SECRET var)
+ *          and GEMINI_API_KEY (free key, needed by the reader's translation).
  * Vars: SITE_URL. KV binding: PFE_STATE.
  */
 
-const VERSION = "2.0.0";
+const VERSION = "3.0.0";
 const DEFAULT_SITE = "https://pfe-hla.pages.dev";
 const BOT_HANDLE = "PFE_MN_bot";
 const DECIDED_TTL = 4 * 24 * 3600; // hide a decided paper until the pipeline syncs it
 const VOCAB_TTL = 20 * 3600;
+const SHOWN_TTL = 8 * 3600; // successive English breaks show different words
+const NEWS_TTL = 10 * 24 * 3600;
+const ALERT_TTL = 10 * 24 * 3600;
 const CACHE_SECONDS = 120;
 
-const CRON_SLOTS = {
-  "30 7 * * *": "morning", // 08:30 Africa/Algiers (UTC+1, no DST)
-  "30 12 * * *": "midday", // 13:30
-  "0 19 * * *": "evening", // 20:00
-};
+// Africa/Algiers is UTC+1 all year (no daylight saving time).
+const LOCAL_OFFSET_MINUTES = 60;
+const SCHEDULE = [
+  { slot: "morning", at: 8 * 60, setting: "morning", label: "Matin 08:00 (plan du jour + leçon)" },
+  { slot: "english1", at: 10 * 60, setting: "english", label: "Anglais 10:00 et 15:30 (2 mots)" },
+  { slot: "midday", at: 13 * 60, setting: "midday", label: "Midi 13:00 (session de tri)" },
+  { slot: "english2", at: 15 * 60 + 30, setting: "english", label: "" },
+  { slot: "news", at: 18 * 60, setting: "news", label: "Actus sécurité IA 18:00" },
+  { slot: "evening", at: 20 * 60, setting: "evening", label: "Soir 20:00 (quiz + mots)" },
+];
+const CATCH_UP_MINUTES = 150; // a delayed tick still sends the slot, never hours later
+const QUIET_FROM = 23 * 60; // alerts wait for 07:00
+const QUIET_TO = 7 * 60;
+
+// PDF reader: fast free Gemini models first (measured 2026-10-28).
+const READER_MODELS = ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gemini-3.5-flash"];
+const READER_TOKEN_DAYS = 120;
+const READER_MAX_BLOCKS = 160;
+const READER_MAX_CHARS = 24000;
+const READER_CACHE_VERSION = "v1";
+const READER_ORIGINS = [
+  /^https:\/\/([a-z0-9-]+\.)?pfe-hla\.pages\.dev$/,
+  /^https:\/\/mvsss97\.github\.io$/,
+  /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/,
+];
 
 const EXCLUSION_LABELS = {
   E1: "Pas du texte (image, son…)",
@@ -57,7 +89,9 @@ const MENU_KEYBOARD = {
   keyboard: [
     [{ text: "📥 Trier" }, { text: "📄 Fiches" }],
     [{ text: "🧠 Apprendre" }, { text: "🇬🇧 Anglais" }],
-    [{ text: "📊 PRISMA" }, { text: "✍️ Rédaction" }],
+    [{ text: "📰 Actus sécu" }, { text: "🎓 Encadrant" }],
+    [{ text: "📖 Lecteur PDF" }, { text: "📊 PRISMA" }],
+    [{ text: "✍️ Rédaction" }, { text: "📱 App" }],
     [{ text: "🗓 Plan du jour" }, { text: "☰ Menu" }],
   ],
   resize_keyboard: true,
@@ -68,6 +102,10 @@ const TEXT_ALIASES = {
   "📄 fiches": "/fiches",
   "🧠 apprendre": "/apprendre",
   "🇬🇧 anglais": "/anglais",
+  "📰 actus sécu": "/actus",
+  "🎓 encadrant": "/encadrant",
+  "📖 lecteur pdf": "/lecteur",
+  "📱 app": "/app",
   "📊 prisma": "/prisma",
   "✍️ rédaction": "/redaction",
   "🗓 plan du jour": "/plan",
@@ -78,8 +116,13 @@ const BOT_COMMANDS = [
   ["aujourdhui", "Ma journée PFE (plan + tâches)"],
   ["tri", "Trier les articles (PRISMA) avec l'IA"],
   ["fiches", "Fiches de lecture écrites par les agents"],
+  ["encadrant", "Articles conseillés par l'encadrant"],
+  ["these", "Plan de lecture de la thèse de l'encadrant"],
+  ["actus", "Actus sécurité IA : failles, dépôts, incidents"],
+  ["lecteur", "Lire un PDF traduit en français (même mise en page)"],
+  ["app", "Ouvrir le tableau de bord dans Telegram"],
   ["prisma", "Compteurs PRISMA"],
-  ["anglais", "3 mots d'anglais à réviser"],
+  ["anglais", "Mots d'anglais à réviser"],
   ["apprendre", "Leçon du jour (maths → NLP → attaques)"],
   ["quiz", "Quiz de la leçon"],
   ["redaction", "Étapes de la rédaction du mémoire"],
@@ -116,7 +159,49 @@ const COMMAND_ALIASES = {
   "/site": "/site",
   "/reglages": "/reglages",
   "/settings": "/reglages",
+  "/actus": "/actus",
+  "/news": "/actus",
+  "/securite": "/actus",
+  "/encadrant": "/encadrant",
+  "/supervisor": "/encadrant",
+  "/these": "/these",
+  "/thesis": "/these",
+  "/questions": "/questions",
+  "/lecteur": "/lecteur",
+  "/reader": "/lecteur",
+  "/lire": "/lecteur",
+  "/app": "/app",
 };
+
+const KIND_LABELS = {
+  vulnerability: "🔓 Faille",
+  repo: "🧪 Dépôt",
+  incident: "⚠️ Incident IA",
+  article: "📰 Article",
+  paper: "📄 Recherche",
+};
+const KIND_FILTERS = [
+  ["all", "Tout"],
+  ["vulnerability", "🔓 Failles"],
+  ["repo", "🧪 Dépôts"],
+  ["incident", "⚠️ Incidents"],
+  ["article", "📰 Presse"],
+  ["paper", "📄 Recherche"],
+];
+const SOURCE_LABELS = {
+  github: "GitHub",
+  gitlab: "GitLab",
+  ghsa: "GitHub Advisory",
+  nvd: "NVD (NIST)",
+  kev: "CISA KEV · exploitée",
+  thehackernews: "The Hacker News",
+  bleepingcomputer: "BleepingComputer",
+  securityweek: "SecurityWeek",
+  aiid: "AI Incident Database",
+  arxiv: "arXiv cs.CR",
+};
+const SEVERITY_RANK = { alert: 0, notable: 1, info: 2 };
+const READING_ICONS = { sheet: "✅", queued: "⏳", no_pdf: "📕", error: "⚠️", not_queued: "▫️" };
 
 // ─── Small utilities ────────────────────────────────────────────────────────
 
@@ -124,7 +209,30 @@ function esc(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function safeUrl(value) {
+  const url = String(value ?? "").trim();
+  return /^https?:\/\/[^\s"<>]+$/i.test(url) ? url : "";
+}
+
+function link(url, text) {
+  const safe = safeUrl(url);
+  return safe ? `<a href="${esc(safe)}">${esc(text)}</a>` : esc(text);
+}
+
+// Messages are built from whole lines: never cut inside an HTML tag.
+function fitLines(lines, max = 3900) {
+  const kept = [];
+  let size = 0;
+  for (const line of lines) {
+    if (size + line.length + 1 > max) break;
+    kept.push(line);
+    size += line.length + 1;
+  }
+  return kept.join("\n");
 }
 
 function cut(value, max) {
@@ -156,6 +264,15 @@ function siteUrl(env) {
   return String(env.SITE_URL || DEFAULT_SITE).replace(/\/+$/, "");
 }
 
+function readerUrl(env, key = "") {
+  return `${siteUrl(env)}/reader.html${key ? `?k=${encodeURIComponent(key)}` : ""}`;
+}
+
+// Opens inside Telegram (mini app): no download, no other app.
+function readerButton(env, key, label = "📖 Lire le PDF (FR / EN)") {
+  return { text: label, web_app: { url: readerUrl(env, key) } };
+}
+
 function pipelineSecret(env) {
   return env.PIPELINE_SECRET || env.TELEGRAM_PAIRING_CODE || "";
 }
@@ -164,12 +281,25 @@ function webhookSecret(env) {
   return env.TELEGRAM_WEBHOOK_SECRET || env.BOT_WEBHOOK_SECRET || "";
 }
 
-function algiersNow() {
-  return new Date(Date.now() + 3600 * 1000); // UTC+1 all year
+function algiersNow(nowMs = Date.now()) {
+  return new Date(nowMs + LOCAL_OFFSET_MINUTES * 60 * 1000);
 }
 
-function todayKey() {
-  return algiersNow().toISOString().slice(0, 10);
+function todayKey(nowMs = Date.now()) {
+  return algiersNow(nowMs).toISOString().slice(0, 10);
+}
+
+function localMinutes(nowMs = Date.now()) {
+  const local = algiersNow(nowMs);
+  return local.getUTCHours() * 60 + local.getUTCMinutes();
+}
+
+function isQuiet(minutes) {
+  return minutes >= QUIET_FROM || minutes < QUIET_TO;
+}
+
+function hhmm(minutes) {
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
 function json(data, status = 200) {
@@ -258,10 +388,23 @@ async function getChat(env) {
   return value ? Number.parseInt(value, 10) : null;
 }
 
-const DEFAULT_SETTINGS = { morning: true, midday: true, evening: true, agents: true, pausedUntil: null };
+const DEFAULT_SETTINGS = {
+  morning: true,
+  english: true,
+  midday: true,
+  news: true,
+  evening: true,
+  alerts: true,
+  agents: true,
+  pausedUntil: null,
+};
 
 async function getSettings(env) {
   return { ...DEFAULT_SETTINGS, ...(await kvGet(env, "settings", {})) };
+}
+
+function isPaused(settings, nowMs = Date.now()) {
+  return Boolean(settings.pausedUntil && settings.pausedUntil > new Date(nowMs).toISOString());
 }
 
 async function queueEvent(env, event) {
@@ -397,24 +540,28 @@ function aiLine(ai) {
   return `🤖 IA : <b>${verdict}</b> · pertinence ${ai.relevance ?? "?"}/5 · confiance ${confidence}%\n<i>${esc(cut(ai.rationale, 280))}</i>`;
 }
 
+// English first, French just below (the student reads both).
 function paperText(item, data, position) {
-  const lines = [
-    `📄 <b>${esc(item.title)}</b>`,
+  const lines = [`📄 <b>${esc(item.title)}</b>`];
+  if (item.titleFr) lines.push(`🇫🇷 <i>${esc(item.titleFr)}</i>`);
+  lines.push(
     `${esc(item.year || "année ?")} · ${esc(cut(item.venue || "source ?", 80))}`,
     `🏷 ${STAGE_LABELS[item.stage] || "À trier"}${position ? ` · ${position}` : ""}`,
     "",
-    item.abstract ? `<i>${esc(cut(item.abstract, 650))}</i>` : "<i>(résumé absent)</i>",
-    "",
-    aiLine(item.ai),
-  ];
-  if (item.url) lines.push(`🔗 <a href="${esc(item.url)}">Source</a>`);
+    item.abstract ? `🇬🇧 <i>${esc(cut(item.abstract, 650))}</i>` : "<i>(résumé absent)</i>",
+  );
+  if (item.abstractFr) lines.push("", `🇫🇷 <b>Résumé :</b> ${esc(cut(item.abstractFr, 700))}`);
+  else if (item.abstract) lines.push("", "🇫🇷 <i>Traduction du résumé au prochain passage des agents.</i>");
+  lines.push("", aiLine(item.ai));
+  if (safeUrl(item.url)) lines.push(`🔗 ${link(item.url, "Source")}`);
   if (item.hasSheet) lines.push(`📘 <a href="${esc(data.site || "")}/#fiches/${esc(item.key)}">Fiche de lecture IA</a>`);
   return lines.join("\n");
 }
 
-function paperButtons(item, data) {
+function paperButtons(item, data, env = null) {
   const key = item.key;
   const sheetUrl = `${data.site || DEFAULT_SITE}/#fiches/${key}`;
+  const reader = env && item.pdf ? [[readerButton(env, key)]] : [];
   if (item.stage === "ft") {
     return {
       inline_keyboard: [
@@ -423,6 +570,7 @@ function paperButtons(item, data) {
           { text: "❌ Exclure…", callback_data: `f:x:${key}` },
         ],
         [{ text: "📘 Lire la fiche", url: sheetUrl }, { text: "➡️ Suivant", callback_data: `s:n:${key}` }],
+        ...reader,
       ],
     };
   }
@@ -434,6 +582,7 @@ function paperButtons(item, data) {
           { text: "❌ Rejeter…", callback_data: `d:x:${key}` },
         ],
         [{ text: "📘 Lire la fiche", url: sheetUrl }, { text: "➡️ Suivant", callback_data: `s:n:${key}` }],
+        ...reader,
       ],
     };
   }
@@ -449,8 +598,8 @@ function paperButtons(item, data) {
   ];
   const extra = [];
   if (item.ai) extra.push({ text: "🤖 Comme l'IA", callback_data: `s:a:${key}` });
-  extra.push({ text: "📖 Lire en priorité", callback_data: `r:${key}` });
-  rows.push(extra);
+  extra.push({ text: "🤖 Fiche en priorité", callback_data: `r:${key}` });
+  rows.push(extra, ...reader);
   return { inline_keyboard: rows };
 }
 
@@ -488,7 +637,7 @@ async function sendNextPaper(env, chatId, { skipKey = null, intro = "" } = {}) {
     );
   }
   const text = `${intro}${paperText(item, data, `${remaining} en attente`)}`;
-  return send(env, chatId, text, { reply_markup: paperButtons(item, data) });
+  return send(env, chatId, text, { reply_markup: paperButtons(item, data, env) });
 }
 
 function findItem(data, key) {
@@ -503,7 +652,12 @@ async function cmdHelp(env, chatId) {
     env,
     chatId,
     "📚 <b>Ton assistant PFE</b>\n\n" +
-      "Je t'écris moi-même 3 fois par jour (08:30, 13:30, 20:00) et après chaque passage des agents IA.\n" +
+      "Je t'écris moi-même chaque jour :\n" +
+      "☀️ 08:00 plan du jour · 🇬🇧 10:00 et 15:30 pause anglais · 📥 13:00 tri\n" +
+      "📰 18:00 actus sécurité IA · 🌙 20:00 bilan (quiz + mots)\n" +
+      "🚨 et tout de suite en cas de faille grave liée à l'IA (sauf la nuit, 23:00–07:00).\n" +
+      "📖 Le lecteur PDF traduit les articles en français en gardant la mise en page : /lecteur\n" +
+      "Tout se règle dans /reglages.\n\n" +
       "Tu peux aussi utiliser les boutons du clavier ou ces commandes :\n\n" +
       lines.join("\n"),
     { reply_markup: MENU_KEYBOARD },
@@ -524,9 +678,18 @@ async function cmdMenu(env, chatId) {
           { text: "🇬🇧 Mots d'anglais", callback_data: "m:anglais" },
         ],
         [
+          { text: "🎓 Encadrant", callback_data: "m:encadrant" },
+          { text: "📘 Thèse", callback_data: "m:these" },
+        ],
+        [
+          { text: "📰 Actus sécurité IA", callback_data: "m:actus" },
           { text: "📊 PRISMA", callback_data: "m:prisma" },
+        ],
+        [
+          { text: "📖 Lecteur PDF (FR)", callback_data: "m:lecteur" },
           { text: "✍️ Rédaction", callback_data: "m:redaction" },
         ],
+        [{ text: "📱 Ouvrir l'app dans Telegram", web_app: { url: `${site}/` } }],
         [
           { text: "🗓 Plan du jour", callback_data: "m:plan" },
           { text: "🤖 Agents IA", callback_data: "m:agents" },
@@ -593,8 +756,18 @@ async function cmdFiches(env, chatId) {
   await send(
     env,
     chatId,
-    `📄 <b>Fiches de lecture (${sheets.length})</b>\n✓ = phrase retrouvée mot pour mot dans le PDF, ≈ = valeur seule, ✗ = introuvable (à vérifier).\n\n${lines.join("\n\n")}`,
-    { reply_markup: { inline_keyboard: [[{ text: "🌐 Toutes les fiches + comparatif", url: `${siteUrl(env)}/#fiches` }]] } },
+    `📄 <b>Fiches de lecture (${sheets.length})</b>\n✓ = phrase retrouvée mot pour mot dans le PDF, ≈ = valeur seule, ✗ = introuvable (à vérifier).\n📖 = lire l'article traduit en français, même mise en page.\n\n${lines.join("\n\n")}`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          ...sheets
+            .filter((sheet) => sheet.pdf)
+            .slice(0, 4)
+            .map((sheet) => [readerButton(env, sheet.key, `📖 ${cut(sheet.title, 40)}`)]),
+          [{ text: "🌐 Toutes les fiches + comparatif", url: `${siteUrl(env)}/#fiches` }],
+        ],
+      },
+    },
   );
 }
 
@@ -608,25 +781,31 @@ async function sendWordFront(env, chatId, word, index, total) {
   );
 }
 
-async function cmdAnglais(env, chatId, count = 3) {
+async function cmdAnglais(env, chatId, count = 3, { intro = null } = {}) {
   const data = await botData(env);
   if (!data || !(data.vocabulary || []).length) {
     return send(env, chatId, "🇬🇧 Pas de vocabulaire disponible pour le moment.");
   }
   const reviewed = new Set(Object.keys(await recentMap(env, "recent:vocab")));
+  const shown = await recentMap(env, "recent:shown");
   const now = new Date().toISOString();
   const pool = data.vocabulary.filter((word) => !reviewed.has(hashTerm(word.term)));
-  let selection = pool
+  // Words shown in the last hours wait, so each English break brings new ones.
+  const unseen = pool.filter((word) => !shown[hashTerm(word.term)]);
+  const candidates = unseen.length >= count ? unseen : pool;
+  let selection = candidates
     .filter((word) => !word.due || word.due <= now)
     .sort((a, b) => String(a.due).localeCompare(String(b.due)) || (a.reps || 0) - (b.reps || 0))
     .slice(0, count);
-  let intro = "🇬🇧 <b>Mots à réviser aujourd'hui</b> (répétition espacée)";
+  let header = intro || "🇬🇧 <b>Mots à réviser aujourd'hui</b> (répétition espacée)";
   if (!selection.length) {
-    selection = [...pool].sort(() => Math.random() - 0.5).slice(0, count);
-    intro = "🇬🇧 <b>Révision libre</b> — aucun mot n'est dû aujourd'hui, bravo !";
+    selection = [...candidates].sort(() => Math.random() - 0.5).slice(0, count);
+    header = intro || "🇬🇧 <b>Révision libre</b> — aucun mot n'est dû aujourd'hui, bravo !";
   }
   if (!selection.length) return send(env, chatId, "🇬🇧 Tous les mots ont été révisés récemment. Reviens demain !");
-  await send(env, chatId, intro);
+  for (const word of selection) shown[hashTerm(word.term)] = Date.now() + SHOWN_TTL * 1000;
+  await kvPut(env, "recent:shown", shown);
+  await send(env, chatId, header);
   for (const [index, word] of selection.entries()) {
     await sendWordFront(env, chatId, word, index + 1, selection.length);
   }
@@ -765,12 +944,14 @@ async function cmdAgents(env, chatId) {
   const [data, last] = await Promise.all([botData(env), kvGet(env, "pipeline:last", null)]);
   const agents = data?.agents || {};
   const lines = [
-    "🤖 <b>Agents IA (Gemini gratuit, 2 passages par jour dans GitHub Actions)</b>",
+    "🤖 <b>Agents IA (Gemini gratuit, dans GitHub Actions)</b>",
+    "2 passages complets par jour (~06:15 et ~15:45) + 6 passages légers pour les actus.",
     "",
     "• <b>Collecteur</b> : cherche les nouveaux articles (OpenAlex + arXiv)",
     "• <b>Trieur</b> : pré-trie titres/résumés selon tes critères PRISMA",
-    "• <b>Lecteur</b> : télécharge le PDF, le lit en entier, écrit une fiche et vérifie ses citations",
+    "• <b>Lecteur</b> : télécharge le PDF, le lit en entier, écrit une fiche et vérifie ses citations (les articles de l'encadrant passent en premier)",
     "• <b>Synthèse</b> : compare les fiches et prépare l'état de l'art",
+    "• <b>Veilleur</b> : surveille failles, dépôts GitHub/GitLab et incidents IA, et les résume en français",
     "",
     `📊 Articles pré-triés par l'IA : ${agents.screenedPapers ?? 0}`,
     `📘 Fiches écrites : ${agents.sheets ?? 0} · en file de lecture : ${agents.readingQueue ?? 0}`,
@@ -808,19 +989,463 @@ async function cmdSearch(env, chatId, query) {
 async function cmdSettings(env, chatId, messageId = null) {
   const settings = await getSettings(env);
   const mark = (value) => (value ? "✅" : "⬜️");
-  const paused = settings.pausedUntil && settings.pausedUntil > new Date().toISOString();
-  const text = `⚙️ <b>Notifications automatiques</b>${paused ? `\n⏸ En pause jusqu'au ${esc(settings.pausedUntil.slice(0, 10))}` : ""}\nTouche pour activer/désactiver :`;
+  const paused = isPaused(settings);
+  const text = `⚙️ <b>Notifications automatiques</b>${paused ? `\n⏸ En pause jusqu'au ${esc(settings.pausedUntil.slice(0, 16).replace("T", " "))} UTC` : ""}\nTouche pour activer/désactiver :`;
+  const rows = SCHEDULE.filter((entry) => entry.label).map((entry) => [
+    { text: `${mark(settings[entry.setting])} ${entry.label}`, callback_data: `set:${entry.setting}` },
+  ]);
   const markup = {
     inline_keyboard: [
-      [{ text: `${mark(settings.morning)} Matin 08:30 (plan + leçon)`, callback_data: "set:morning" }],
-      [{ text: `${mark(settings.midday)} Midi 13:30 (session de tri)`, callback_data: "set:midday" }],
-      [{ text: `${mark(settings.evening)} Soir 20:00 (quiz + mots)`, callback_data: "set:evening" }],
+      ...rows,
+      [{ text: `${mark(settings.alerts)} 🚨 Alertes failles IA graves (immédiat)`, callback_data: "set:alerts" }],
       [{ text: `${mark(settings.agents)} Rapports des agents IA`, callback_data: "set:agents" }],
       [{ text: paused ? "▶️ Reprendre maintenant" : "⏸ Pause 24 h", callback_data: "set:pause" }],
     ],
   };
   if (messageId) return edit(env, chatId, messageId, text, { reply_markup: markup });
   return send(env, chatId, text, { reply_markup: markup });
+}
+
+// ─── AI-security news and alerts ───────────────────────────────────────────
+
+function newsLine(item) {
+  const icon = item.severity === "alert" ? "🚨" : item.severity === "notable" ? "🔸" : "▫️";
+  const extra = item.stars ? ` ⭐${item.stars}` : item.cvss ? ` · CVSS ${item.cvss}` : "";
+  const source = SOURCE_LABELS[item.source] || item.source || "";
+  const summary = item.summary ? `\n<i>${esc(cut(item.summary, 230))}</i>${item.fr ? "" : " 🇬🇧"}` : "";
+  const titleFr = item.titleFr ? `\n🇫🇷 ${esc(cut(item.titleFr, 160))}` : "";
+  return `${icon} ${KIND_LABELS[item.kind] || "•"}${extra} · ${esc(source)}\n${link(item.url, cut(item.title, 150))}${titleFr}${summary}\n`;
+}
+
+function newsButtons(env, active = "all") {
+  const filters = KIND_FILTERS.map(([kind, label]) => ({
+    text: `${kind === active ? "• " : ""}${label}`,
+    callback_data: `n:${kind}`,
+  }));
+  return {
+    inline_keyboard: [
+      filters.slice(0, 3),
+      filters.slice(3),
+      [{ text: "🌐 Toutes les actus sur le site", url: `${siteUrl(env)}/#actus` }],
+    ],
+  };
+}
+
+async function cmdActus(env, chatId, kind = "all", messageId = null) {
+  const data = await botData(env);
+  if (!data) return send(env, chatId, unavailable);
+  const items = (data.securityNews || [])
+    .filter((item) => kind === "all" || item.kind === kind)
+    .sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")))
+    .slice(0, 8);
+  const label = (KIND_FILTERS.find(([value]) => value === kind) || KIND_FILTERS[0])[1];
+  const header = [
+    `📰 <b>Actus sécurité IA</b> · ${esc(label)}`,
+    "🚨 alerte · 🔸 important · ▫️ à connaître · 🇬🇧 résumé pas encore traduit",
+    "",
+  ];
+  const body = items.length
+    ? items.map(newsLine)
+    : ["Rien dans cette catégorie pour l'instant. Le veilleur passe 8 fois par jour."];
+  const text = fitLines([...header, ...body]);
+  if (messageId) return edit(env, chatId, messageId, text, { reply_markup: newsButtons(env, kind) });
+  return send(env, chatId, text, { reply_markup: newsButtons(env, kind) });
+}
+
+async function newsDigest(env, chatId, nowMs = Date.now()) {
+  const data = await botData(env);
+  const seen = await recentMap(env, "recent:news");
+  const since = new Date(nowMs - 36 * 3600 * 1000).toISOString().slice(0, 19);
+  const fresh = (data?.securityNews || [])
+    .filter((item) => item.key && !seen[hashTerm(item.key)] && String(item.collectedAt || "").slice(0, 19) >= since)
+    .sort(
+      (a, b) =>
+        (SEVERITY_RANK[a.severity] ?? 3) - (SEVERITY_RANK[b.severity] ?? 3) ||
+        String(b.at || "").localeCompare(String(a.at || "")),
+    )
+    .slice(0, 7);
+  if (!fresh.length) {
+    return send(env, chatId, "📰 <b>Actus sécurité IA</b>\nRien de nouveau de marquant depuis hier. L'historique : /actus", {
+      reply_markup: { inline_keyboard: [[{ text: "📰 Voir les actus", callback_data: "n:all" }]] },
+    });
+  }
+  for (const item of fresh) seen[hashTerm(item.key)] = Date.now() + NEWS_TTL * 1000;
+  await kvPut(env, "recent:news", seen);
+  const text = fitLines([
+    `📰 <b>Actus sécurité IA du jour</b> (${fresh.length})`,
+    "Failles, nouveaux dépôts GitHub/GitLab, incidents IA, presse et recherche.",
+    "",
+    ...fresh.map(newsLine),
+  ]);
+  return send(env, chatId, text, { reply_markup: newsButtons(env) });
+}
+
+function alertText(alerts) {
+  const lines = [`🚨 <b>Alerte sécurité IA</b>${alerts.length > 1 ? ` (${alerts.length})` : ""}`, ""];
+  for (const alert of alerts.slice(0, 5)) {
+    lines.push(`<b>${esc(cut(alert.title, 180))}</b>`);
+    if (alert.titleFr) lines.push(`🇫🇷 <b>${esc(cut(alert.titleFr, 180))}</b>`);
+    lines.push(`${KIND_LABELS[alert.kind] || "•"} · ${esc(SOURCE_LABELS[alert.source] || alert.source || "")}`);
+    if (alert.summary) lines.push(`<i>${esc(cut(alert.summary, 300))}</i>`);
+    if (safeUrl(alert.url)) lines.push(`🔗 ${link(alert.url, "Détails")}`);
+    lines.push("");
+  }
+  lines.push("Pourquoi une alerte : faille critique, ou activement exploitée, qui touche un logiciel d'IA.");
+  return fitLines(lines);
+}
+
+async function queueAlerts(env, alerts) {
+  const seen = await recentMap(env, "recent:alerts");
+  const pending = await kvGet(env, "alerts:pending", []);
+  const known = new Set([...Object.keys(seen), ...pending.map((alert) => hashTerm(alert.key))]);
+  const fresh = [];
+  for (const alert of alerts) {
+    const id = hashTerm(alert.key);
+    if (known.has(id)) continue;
+    known.add(id);
+    fresh.push({
+      key: String(alert.key),
+      kind: String(alert.kind || ""),
+      source: String(alert.source || ""),
+      title: cut(alert.title, 200),
+      titleFr: cut(alert.titleFr, 200),
+      summary: cut(alert.summary, 400),
+      url: safeUrl(alert.url),
+    });
+  }
+  if (fresh.length) await kvPut(env, "alerts:pending", [...pending, ...fresh].slice(-10), 3 * 24 * 3600);
+  return fresh.length;
+}
+
+async function flushAlerts(env, { chatId = null, settings = null, nowMs = Date.now() } = {}) {
+  const pending = await kvGet(env, "alerts:pending", []);
+  if (!pending.length) return false;
+  const chat = chatId ?? (await getChat(env));
+  const config = settings ?? (await getSettings(env));
+  // At most once: forget the queue first, so a failing send never repeats.
+  await kvPut(env, "alerts:pending", []);
+  const seen = await recentMap(env, "recent:alerts");
+  for (const alert of pending) seen[hashTerm(alert.key)] = Date.now() + ALERT_TTL * 1000;
+  await kvPut(env, "recent:alerts", seen);
+  if (!chat || !config.alerts || isPaused(config, nowMs)) return false;
+  await send(env, chat, alertText(pending), {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: "📰 Toutes les actus", callback_data: "n:all" },
+          { text: "🔕 Couper les alertes", callback_data: "set:alerts" },
+        ],
+      ],
+    },
+  });
+  return true;
+}
+
+// ─── PDF reader (mini app) ─────────────────────────────────────────────────
+
+const encoder = new TextEncoder();
+
+function hex(bytes) {
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function hmacSha256(key, message) {
+  const cryptoKey = await crypto.subtle.importKey("raw", typeof key === "string" ? encoder.encode(key) : key, { name: "HMAC", hash: "SHA-256" }, false, [
+    "sign",
+  ]);
+  return new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(message)));
+}
+
+async function sha256Hex(text) {
+  return hex(await crypto.subtle.digest("SHA-256", encoder.encode(text)));
+}
+
+/** Signed reader token for a computer browser: `${expiry}.${signature}`. */
+async function readerToken(env, nowMs = Date.now()) {
+  const expiry = Math.floor(nowMs / 1000) + READER_TOKEN_DAYS * 86400;
+  return `${expiry}.${hex(await hmacSha256(env.TELEGRAM_BOT_TOKEN, `reader:${expiry}`)).slice(0, 40)}`;
+}
+
+async function verifyReaderToken(env, token) {
+  const [expiry, signature] = String(token || "").split(".");
+  if (!expiry || !signature || Number(expiry) < Date.now() / 1000) return false;
+  return safeEqual(signature, hex(await hmacSha256(env.TELEGRAM_BOT_TOKEN, `reader:${expiry}`)).slice(0, 40));
+}
+
+/** Telegram mini-app launch data, checked with the bot token (core.telegram.org/bots/webapps). */
+async function verifyInitData(env, initData) {
+  const params = new URLSearchParams(String(initData || ""));
+  const hash = params.get("hash");
+  if (!hash) return null;
+  params.delete("hash");
+  const check = [...params.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+  const secret = await hmacSha256("WebAppData", env.TELEGRAM_BOT_TOKEN);
+  if (!safeEqual(hex(await hmacSha256(secret, check)), hash)) return null;
+  if (!(Date.now() / 1000 - Number(params.get("auth_date") || 0) < 7 * 86400)) return null;
+  try {
+    return JSON.parse(params.get("user") || "{}").id ?? null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function readerAuthorized(request, env) {
+  if (!env.TELEGRAM_BOT_TOKEN) return false;
+  const header = request.headers.get("Authorization") || "";
+  if (header.startsWith("Bearer ")) return verifyReaderToken(env, header.slice(7));
+  if (header.startsWith("tma ")) {
+    const userId = await verifyInitData(env, header.slice(4));
+    const chat = await getChat(env);
+    return Boolean(userId && chat && Number(userId) === chat);
+  }
+  return false;
+}
+
+function corsHeaders(request) {
+  const origin = request.headers.get("Origin") || "";
+  if (!READER_ORIGINS.some((pattern) => pattern.test(origin))) return {};
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  };
+}
+
+function readerJson(request, data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", ...corsHeaders(request) },
+  });
+}
+
+const READER_PROMPT = [
+  "Tu traduis des blocs de texte extraits d'une page d'article scientifique (attaques adversariales, NLP, sécurité de l'IA) de l'anglais vers le français.",
+  "Règles : traduction fidèle et naturelle, en français scientifique ; un bloc traduit par bloc reçu, même identifiant `i` ;",
+  "ne fusionne pas et ne coupe pas les blocs ; garde inchangés les formules, variables, chiffres, citations ([12], (Jin et al., 2020)), URL, noms de méthodes, de modèles et de jeux de données ;",
+  "un bloc qui n'est pas du texte anglais (équation, nombre, code, nom propre seul) est recopié tel quel.",
+  "Glossaire : adversarial → adversarial(e) (jamais « contradictoire ») ; hard-label → étiquette seule (hard-label) ; black-box → boîte noire ; query → requête ;",
+  "word importance ranking → classement d'importance des mots ; attack success rate → taux de succès de l'attaque ; robustness → robustesse ; embedding → plongement (embedding).",
+].join(" ");
+
+async function geminiTranslate(env, texts) {
+  const body = {
+    systemInstruction: { parts: [{ text: READER_PROMPT }] },
+    contents: [{ role: "user", parts: [{ text: JSON.stringify(texts.map((text, i) => ({ i, en: text }))) }] }],
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseJsonSchema: {
+        type: "object",
+        properties: {
+          blocks: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { i: { type: "integer" }, fr: { type: "string" } },
+              required: ["i", "fr"],
+            },
+          },
+        },
+        required: ["blocks"],
+      },
+      temperature: 0.1,
+      maxOutputTokens: 32768,
+    },
+  };
+  let last = "no model";
+  for (const model of READER_MODELS) {
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!response.ok) {
+        last = `${model}: HTTP ${response.status}`;
+        continue;
+      }
+      const data = await response.json();
+      const parts = data?.candidates?.[0]?.content?.parts || [];
+      const parsed = JSON.parse(parts.filter((part) => !part.thought).map((part) => part.text || "").join(""));
+      const french = texts.map(() => null);
+      for (const block of parsed.blocks || []) {
+        if (Number.isInteger(block.i) && block.i >= 0 && block.i < texts.length && typeof block.fr === "string") french[block.i] = block.fr;
+      }
+      const missing = french.filter((value) => value === null).length;
+      if (missing > texts.length / 4) {
+        last = `${model}: ${missing} bloc(s) manquant(s)`;
+        continue;
+      }
+      return { fr: french, model: data.modelVersion || model };
+    } catch (error) {
+      last = `${model}: ${error.name || "error"}`;
+    }
+  }
+  throw new Error(`traduction impossible (${last})`);
+}
+
+async function readerTranslate(request, env) {
+  if (!env.GEMINI_API_KEY) return readerJson(request, { ok: false, error: "missing-key" }, 503);
+  const payload = await request.json().catch(() => null);
+  const texts = Array.isArray(payload?.texts) ? payload.texts.map((text) => String(text ?? "")) : null;
+  if (!texts || !texts.length) return readerJson(request, { ok: false, error: "no texts" }, 400);
+  if (texts.length > READER_MAX_BLOCKS || texts.join("").length > READER_MAX_CHARS) {
+    return readerJson(request, { ok: false, error: "page too large" }, 413);
+  }
+  const cacheKey = `tr:${READER_CACHE_VERSION}:${await sha256Hex(JSON.stringify(texts))}`;
+  const cached = await kvGet(env, cacheKey, null);
+  if (cached) return readerJson(request, { ok: true, cached: true, ...cached });
+  try {
+    const result = await geminiTranslate(env, texts);
+    await kvPut(env, cacheKey, result);
+    return readerJson(request, { ok: true, cached: false, ...result });
+  } catch (error) {
+    return readerJson(request, { ok: false, error: String(error.message || error) }, 502);
+  }
+}
+
+async function readerPdf(request, env, url) {
+  const target = safeUrl(url.searchParams.get("url"));
+  if (!target) return readerJson(request, { ok: false, error: "bad url" }, 400);
+  let response;
+  try {
+    response = await fetch(target, {
+      headers: { "User-Agent": `Mozilla/5.0 (compatible; PFE-HLA-Reader/${VERSION})`, Accept: "application/pdf,*/*" },
+      redirect: "follow",
+    });
+  } catch (error) {
+    return readerJson(request, { ok: false, error: `unreachable: ${error.message}` }, 502);
+  }
+  if (!response.ok) return readerJson(request, { ok: false, error: `HTTP ${response.status}` }, 502);
+  const type = response.headers.get("Content-Type") || "";
+  if (!/pdf|octet-stream/i.test(type)) return readerJson(request, { ok: false, error: `not a PDF (${type || "unknown type"})` }, 415);
+  return new Response(response.body, {
+    headers: { "Content-Type": "application/pdf", "Cache-Control": "private, max-age=3600", ...corsHeaders(request) },
+  });
+}
+
+async function handleReader(request, env, url) {
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
+  if (!(await readerAuthorized(request, env))) return readerJson(request, { ok: false, error: "unauthorized" }, 401);
+  if (url.pathname === "/reader/status") {
+    return readerJson(request, { ok: true, translate: Boolean(env.GEMINI_API_KEY), version: VERSION });
+  }
+  if (url.pathname === "/reader/pdf" && request.method === "GET") return readerPdf(request, env, url);
+  if (url.pathname === "/reader/translate" && request.method === "POST") return readerTranslate(request, env);
+  return readerJson(request, { ok: false, error: "not found" }, 404);
+}
+
+async function cmdLecteur(env, chatId) {
+  const token = await readerToken(env);
+  const lines = [
+    "📖 <b>Lecteur PDF bilingue</b>",
+    "Il ouvre l'article ici, dans Telegram, et traduit chaque page en français <b>sans changer la mise en page</b> (figures, colonnes et formules restent à leur place).",
+    "• Boutons en haut : 🇬🇧 original · 🇫🇷 français · 🇬🇧|🇫🇷 les deux côte à côte.",
+    "• Touche un paragraphe traduit pour revoir l'anglais.",
+    "• Les traductions sont gardées : la 2ᵉ ouverture est instantanée.",
+    "",
+    "Les boutons « 📖 Lire » apparaissent sur les cartes d'articles, les fiches et la liste de l'encadrant.",
+    "💻 Sur l'ordinateur : ouvre une fois le lien « Activer sur ce navigateur » (valable 4 mois).",
+    "⚠️ Le texte des pages est envoyé à Gemini (offre gratuite de Google) pour la traduction : n'y ouvre pas de document confidentiel.",
+  ];
+  return send(env, chatId, lines.join("\n"), {
+    reply_markup: {
+      inline_keyboard: [
+        [readerButton(env, "", "📖 Ouvrir le lecteur (URL ou fichier)")],
+        [{ text: "💻 Activer sur ce navigateur", url: `${readerUrl(env)}#t=${token}` }],
+      ],
+    },
+  });
+}
+
+// ─── Supervisor material ───────────────────────────────────────────────────
+
+async function cmdEncadrant(env, chatId) {
+  const data = await botData(env);
+  if (!data) return send(env, chatId, unavailable);
+  const supervisor = data.supervisor;
+  const site = data.site || siteUrl(env);
+  const readable = (supervisor?.items || []).filter((item) => item.priority === 1 && item.pdf).slice(0, 6);
+  const readerRows = [];
+  for (let index = 0; index < readable.length; index += 2) {
+    readerRows.push(readable.slice(index, index + 2).map((item) => readerButton(env, item.key, `📖 ${cut(item.short, 22)}`)));
+  }
+  const buttons = {
+    inline_keyboard: [
+      ...readerRows,
+      [
+        { text: "📘 Plan de lecture de la thèse", callback_data: "m:these" },
+        { text: "❓ Questions à poser", callback_data: "m:questions" },
+      ],
+      [
+        { text: "🧭 Leçons hard-label", callback_data: "l:o:hardlabel" },
+        { text: "🌐 Page Encadrant", url: `${siteUrl(env)}/#encadrant` },
+      ],
+    ],
+  };
+  if (!supervisor?.total) {
+    return send(env, chatId, "🎓 La liste d'articles de ton encadrant sera importée au prochain passage des agents.", { reply_markup: buttons });
+  }
+  const items = (supervisor.items || []).filter((item) => item.priority === 1);
+  const lines = [
+    "🎓 <b>Articles conseillés par ton encadrant</b>",
+    `${supervisor.total} articles · ✅ ${supervisor.sheets} fiche(s) · ⏳ ${supervisor.queued} en lecture · 📕 ${supervisor.noPdf} sans PDF libre`,
+    "",
+    "<b>Priorité 1 — à lire et discuter avec lui :</b>",
+    ...items.map((item) => {
+      const name = item.reading === "sheet" ? link(`${site}/#fiches/${item.key}`, item.short) : `<b>${esc(item.short)}</b>`;
+      return `${READING_ICONS[item.reading] || "▫️"} ${name} (${esc(item.year || "?")}) — ${esc(cut(item.title, 70))}`;
+    }),
+    "",
+    "✅ fiche prête · ⏳ l'agent lecteur s'en occupe · 📕 PDF non libre : demande-le à l'encadrant ou à la bibliothèque",
+  ];
+  return send(env, chatId, fitLines(lines), { reply_markup: buttons });
+}
+
+async function cmdThese(env, chatId, messageId = null) {
+  const learning = await loadData(env, "learning.json");
+  const plan = learning?.supervisor?.thesisPlan || [];
+  if (!plan.length) return send(env, chatId, unavailable);
+  const done = new Set(await kvGet(env, "these:done", []));
+  const lines = [
+    "📘 <b>Lire la thèse de ton encadrant</b>",
+    esc(learning.supervisor.thesisNote || ""),
+    `Progression : <b>${plan.filter((step) => done.has(step.id)).length}/${plan.length}</b>`,
+    "",
+    ...plan.map((step, index) => `${done.has(step.id) ? "✅" : "☐"} <b>${index + 1}. ${esc(step.title)}</b> (${esc(step.pages || "")})\n    🎯 ${esc(step.goal)}`),
+  ];
+  const markup = {
+    inline_keyboard: [
+      ...plan.map((step, index) => [
+        { text: `${done.has(step.id) ? "✅" : "☐"} ${index + 1}. ${cut(step.title, 45)}`, callback_data: `t:${step.id}` },
+      ]),
+      [{ text: "🧠 Leçons sur la thèse", callback_data: "l:o:these" }],
+    ],
+  };
+  if (messageId) return edit(env, chatId, messageId, fitLines(lines), { reply_markup: markup });
+  return send(env, chatId, fitLines(lines), { reply_markup: markup });
+}
+
+async function cmdQuestions(env, chatId) {
+  const learning = await loadData(env, "learning.json");
+  const questions = learning?.supervisor?.questions || [];
+  if (!questions.length) return send(env, chatId, unavailable);
+  return send(
+    env,
+    chatId,
+    fitLines([
+      "❓ <b>Questions à poser à ton encadrant</b>",
+      "Note ses réponses : elles fixent le cadre du PFE.",
+      "",
+      ...questions.map((question, index) => `${index + 1}. ${esc(question)}`),
+    ]),
+    { reply_markup: { inline_keyboard: [[{ text: "🎓 Articles de l'encadrant", callback_data: "m:encadrant" }]] } },
+  );
 }
 
 async function cmdToday(env, chatId, { greeting = "📅 <b>Ta journée PFE</b>" } = {}) {
@@ -833,6 +1458,8 @@ async function cmdToday(env, chatId, { greeting = "📅 <b>Ta journée PFE</b>" 
   const news = data?.news24h || {};
   const now = new Date().toISOString();
   const dueWords = (data?.vocabulary || []).filter((word) => !word.due || word.due <= now).length;
+  const supervisor = data?.supervisor;
+  const alerts = (data?.securityNews || []).filter((item) => item.severity === "alert").length;
   const lines = [
     greeting,
     `Semaine ${week}/16${entry ? ` — ${esc(entry.goal)}` : ""}`,
@@ -841,8 +1468,10 @@ async function cmdToday(env, chatId, { greeting = "📅 <b>Ta journée PFE</b>" 
       ? `🆕 Dernières 24 h : ${news.papers || 0} nouvel(s) article(s), ${news.sheets || 0} nouvelle(s) fiche(s).`
       : "🆕 Pas de nouveauté des agents depuis hier.",
     `📥 ${pending} article(s) attendent ton tri.`,
+    supervisor?.total ? `🎓 Liste de l'encadrant : ${supervisor.sheets}/${supervisor.total} fiche(s) prête(s).` : "",
     lesson ? `🧠 Leçon du jour : <b>${esc(lesson.title)}</b>` : "",
-    `🇬🇧 ${dueWords} mot(s) à réviser.`,
+    `🇬🇧 ${dueWords} mot(s) à réviser (pauses anglais à 10:00 et 15:30).`,
+    alerts ? `🚨 ${alerts} alerte(s) sécurité IA récente(s) : /actus` : "📰 Actus sécurité IA à 18:00.",
   ].filter(Boolean);
   await send(env, chatId, lines.join("\n"), {
     reply_markup: {
@@ -855,7 +1484,10 @@ async function cmdToday(env, chatId, { greeting = "📅 <b>Ta journée PFE</b>" 
           { text: "🇬🇧 Mots", callback_data: "m:anglais" },
           { text: "📄 Fiches", callback_data: "m:fiches" },
         ],
-        [{ text: "🗓 Plan de la semaine", callback_data: "m:plan" }],
+        [
+          { text: "🎓 Encadrant", callback_data: "m:encadrant" },
+          { text: "🗓 Plan de la semaine", callback_data: "m:plan" },
+        ],
       ],
     },
   });
@@ -893,6 +1525,20 @@ async function runCommand(env, chatId, command, args = "") {
       return send(env, chatId, `🌐 <a href="${esc(siteUrl(env))}">Ouvrir le tableau de bord PFE</a>`);
     case "/reglages":
       return cmdSettings(env, chatId);
+    case "/actus":
+      return cmdActus(env, chatId);
+    case "/encadrant":
+      return cmdEncadrant(env, chatId);
+    case "/these":
+      return cmdThese(env, chatId);
+    case "/questions":
+      return cmdQuestions(env, chatId);
+    case "/lecteur":
+      return cmdLecteur(env, chatId);
+    case "/app":
+      return send(env, chatId, "📱 <b>Le tableau de bord dans Telegram</b>\nTouche le bouton : le site s'ouvre ici, sans quitter Telegram.", {
+        reply_markup: { inline_keyboard: [[{ text: "📱 Ouvrir l'app", web_app: { url: `${siteUrl(env)}/` } }]] },
+      });
     default:
       return send(env, chatId, "🤔 Je n'ai pas compris. Voici le menu :", { reply_markup: MENU_KEYBOARD }).then(() =>
         cmdMenu(env, chatId),
@@ -999,7 +1645,7 @@ async function handleCallback(env, callback) {
     const botState = await botData(env);
     const item = findItem(botState, key) || { key, stage: prefix === "f" ? "ft" : prefix === "d" ? "final" : "veille" };
     await answer(env, callback.id);
-    return editButtons(env, chatId, messageId, paperButtons(item, botState || {}));
+    return editButtons(env, chatId, messageId, paperButtons(item, botState || {}, env));
   }
 
   // Ask the reader agent to read a paper first
@@ -1022,12 +1668,18 @@ async function handleCallback(env, callback) {
     if (!word) return answer(env, callback.id, "Mot introuvable (liste mise à jour)", true);
     if (parts[1] === "s") {
       await answer(env, callback.id);
-      const synonyms = (word.syn || []).length ? `\nSynonymes : ${esc(word.syn.join(", "))}` : "";
+      // English definition and example, each followed by its French version.
+      const lines = [`🇬🇧 <b>${esc(word.term)}</b> = <b>${esc(word.fr)}</b>`, "", `🇬🇧 ${esc(word.def)}`];
+      if (word.defFr) lines.push(`🇫🇷 ${esc(word.defFr)}`);
+      if ((word.syn || []).length) lines.push(`Synonymes : ${esc(word.syn.join(", "))}`);
+      lines.push("", `🇬🇧 <i>« ${esc(word.ex)} »</i>`);
+      if (word.exFr) lines.push(`🇫🇷 <i>« ${esc(word.exFr)} »</i>`);
+      lines.push("", "Tu le savais ?");
       return edit(
         env,
         chatId,
         messageId,
-        `🇬🇧 <b>${esc(word.term)}</b> = <b>${esc(word.fr)}</b>\n${esc(word.def)}${synonyms}\n<i>« ${esc(word.ex)} »</i>\n\nTu le savais ?`,
+        lines.join("\n"),
         {
           reply_markup: {
             inline_keyboard: [
@@ -1108,18 +1760,36 @@ async function handleCallback(env, callback) {
     return null;
   }
 
+  // News filters (edit the list in place)
+  if (parts[0] === "n") {
+    const kind = KIND_FILTERS.some(([value]) => value === parts[1]) ? parts[1] : "all";
+    await answer(env, callback.id);
+    const fromNews = String(callback.message?.text || "").startsWith("📰 Actus sécurité IA ·");
+    return cmdActus(env, chatId, kind, fromNews ? messageId : null);
+  }
+
+  // Thesis reading plan: tick a part as read
+  if (parts[0] === "t" && parts[1]) {
+    const done = new Set(await kvGet(env, "these:done", []));
+    if (done.has(parts[1])) done.delete(parts[1]);
+    else done.add(parts[1]);
+    await kvPut(env, "these:done", [...done]);
+    await answer(env, callback.id, done.has(parts[1]) ? "✅ Partie lue" : "Partie à relire");
+    return cmdThese(env, chatId, messageId);
+  }
+
   // Settings toggles
   if (parts[0] === "set") {
     const settings = await getSettings(env);
     if (parts[1] === "pause") {
-      const paused = settings.pausedUntil && settings.pausedUntil > new Date().toISOString();
-      settings.pausedUntil = paused ? null : new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+      settings.pausedUntil = isPaused(settings) ? null : new Date(Date.now() + 24 * 3600 * 1000).toISOString();
     } else if (parts[1] in DEFAULT_SETTINGS) {
       settings[parts[1]] = !settings[parts[1]];
     }
     await kvPut(env, "settings", settings);
     await answer(env, callback.id, "Réglage enregistré");
-    return cmdSettings(env, chatId, messageId);
+    const fromSettings = String(callback.message?.text || "").startsWith("⚙️");
+    return cmdSettings(env, chatId, fromSettings ? messageId : null);
   }
 
   return answer(env, callback.id, data === "noop" ? "" : "Action inconnue");
@@ -1127,35 +1797,65 @@ async function handleCallback(env, callback) {
 
 // ─── Scheduled pushes ───────────────────────────────────────────────────────
 
-async function scheduledPush(env, slot) {
-  const chatId = await getChat(env);
-  if (!chatId) return;
-  const settings = await getSettings(env);
-  if (settings.pausedUntil && settings.pausedUntil > new Date().toISOString()) return;
-  const sentKey = `sent:${slot}:${todayKey()}`;
-  if (await kvGet(env, sentKey, null)) return; // never twice per slot and day
-  if (slot === "morning" && settings.morning) {
-    await cmdToday(env, chatId, { greeting: "☀️ <b>Bonjour !</b> Voici ta journée PFE." });
-  } else if (slot === "midday" && settings.midday) {
+const ENGLISH_BREAK = "🇬🇧 <b>Pause anglais</b> (1 minute) — devine le sens, puis touche « Voir la réponse ».";
+
+async function deliverSlot(env, chatId, slot, nowMs) {
+  if (slot === "morning") {
+    return cmdToday(env, chatId, { greeting: "☀️ <b>Bonjour !</b> Voici ta journée PFE." });
+  }
+  if (slot === "english1" || slot === "english2") return cmdAnglais(env, chatId, 2, { intro: ENGLISH_BREAK });
+  if (slot === "midday") {
     const data = await botData(env);
     const { item } = data ? await nextPaper(env, data) : { item: null };
     if (item) {
-      await sendNextPaper(env, chatId, { intro: "🕐 <b>Session de tri (5 minutes)</b>\nDécide article par article ; l'IA te donne son avis.\n\n" });
-    } else {
-      await cmdAnglais(env, chatId, 2);
+      return sendNextPaper(env, chatId, { intro: "🕐 <b>Session de tri (5 minutes)</b>\nDécide article par article ; l'IA te donne son avis.\n\n" });
     }
-  } else if (slot === "evening" && settings.evening) {
+    return cmdEncadrant(env, chatId);
+  }
+  if (slot === "news") return newsDigest(env, chatId, nowMs);
+  if (slot === "evening") {
     const learning = await loadData(env, "learning.json");
     const lessons = flattenLessons(learning);
     const state = await learnState(env);
     const lesson = lessons[Math.min(state.current || 0, Math.max(lessons.length - 1, 0))];
     await send(env, chatId, "🌙 <b>Bilan du soir</b> — 5 minutes pour ancrer ce que tu as vu aujourd'hui.");
     if (lesson && !(state.done || []).includes(lesson.id)) await sendQuiz(env, chatId, lesson.id);
-    await cmdAnglais(env, chatId, 3);
-  } else {
-    return;
+    return cmdAnglais(env, chatId, 3);
   }
+  return null;
+}
+
+/** Send one slot of SCHEDULE, at most once per day. Returns true when sent. */
+async function scheduledPush(env, slot, { nowMs = Date.now(), chatId = null, settings = null } = {}) {
+  const entry = SCHEDULE.find((item) => item.slot === slot);
+  if (!entry) return false;
+  const chat = chatId ?? (await getChat(env));
+  if (!chat) return false;
+  const config = settings ?? (await getSettings(env));
+  if (isPaused(config, nowMs) || !config[entry.setting]) return false;
+  const sentKey = `sent:${slot}:${todayKey(nowMs)}`;
+  if (await kvGet(env, sentKey, null)) return false;
+  // Mark first: a failing Telegram call must not repeat the push every 30 minutes.
   await kvPut(env, sentKey, true, 36 * 3600);
+  await deliverSlot(env, chat, slot, nowMs);
+  return true;
+}
+
+/** Cron tick (every 30 minutes): due slots, then alerts held during the night. */
+async function tick(env, nowMs = Date.now()) {
+  const minutes = localMinutes(nowMs);
+  const due = SCHEDULE.filter((entry) => minutes >= entry.at && minutes < entry.at + CATCH_UP_MINUTES);
+  const quiet = isQuiet(minutes);
+  if (!due.length && quiet) return [];
+  const chatId = await getChat(env);
+  if (!chatId) return [];
+  const settings = await getSettings(env);
+  const sent = [];
+  if (!quiet && (await flushAlerts(env, { chatId, settings, nowMs }))) sent.push("alerts");
+  for (const entry of due) {
+    if (await scheduledPush(env, entry.slot, { nowMs, chatId, settings })) sent.push(entry.slot);
+  }
+  return sent;
 }
 
 // ─── Pipeline API (GitHub Actions) ──────────────────────────────────────────
@@ -1187,11 +1887,18 @@ async function apiAck(request, env) {
 async function apiPipeline(request, env) {
   const summary = await request.json().catch(() => null);
   if (!summary || typeof summary !== "object") return json({ ok: false }, 400);
-  await kvPut(env, "pipeline:last", summary);
+  const alerts = (Array.isArray(summary.alerts) ? summary.alerts : [])
+    .filter((alert) => alert && typeof alert.key === "string" && alert.key && alert.title)
+    .slice(0, 10);
+  await kvPut(env, "pipeline:last", { ...summary, alerts: alerts.length });
   memoryCache.clear(); // the site was just redeployed
   const chatId = await getChat(env);
   const settings = await getSettings(env);
-  if (!chatId || !settings.agents) return json({ ok: true, notified: false });
+  let alerted = false;
+  if (alerts.length && (await queueAlerts(env, alerts)) && !isQuiet(localMinutes())) {
+    alerted = await flushAlerts(env, { chatId, settings });
+  }
+  if (!chatId || !settings.agents || summary.light) return json({ ok: true, notified: false, alerted });
   const sheets = Array.isArray(summary.sheets) ? summary.sheets : [];
   const site = siteUrl(env);
   const lines = [];
@@ -1219,7 +1926,7 @@ async function apiPipeline(request, env) {
     lines.push(`⚠️ ${summary.agentErrors} tâche(s) d'agent en erreur — je réessaierai au prochain passage.`);
     await kvPut(env, `notified:err:${today}`, true, 36 * 3600);
   }
-  if (!lines.length) return json({ ok: true, notified: false });
+  if (!lines.length) return json({ ok: true, notified: false, alerted });
   await send(env, chatId, lines.filter((line) => line !== undefined).join("\n"), {
     reply_markup: {
       inline_keyboard: [
@@ -1230,7 +1937,7 @@ async function apiPipeline(request, env) {
       ],
     },
   });
-  return json({ ok: true, notified: true });
+  return json({ ok: true, notified: true, alerted });
 }
 
 async function setup(request, env) {
@@ -1308,7 +2015,12 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/" || url.pathname === "/health") {
-      return json({ ok: true, bot: BOT_HANDLE, version: VERSION, crons: Object.keys(CRON_SLOTS) });
+      return json({
+        ok: true,
+        bot: BOT_HANDLE,
+        version: VERSION,
+        schedule: SCHEDULE.map((entry) => `${hhmm(entry.at)} ${entry.slot}`),
+      });
     }
 
     if (url.pathname === "/webhook" && request.method === "POST") {
@@ -1321,6 +2033,8 @@ export default {
       return new Response("OK"); // always acknowledge quickly to Telegram
     }
 
+    if (url.pathname.startsWith("/reader/")) return handleReader(request, env, url);
+
     if (url.pathname.startsWith("/api/")) {
       if (!authorizedPipeline(request, env)) return json({ ok: false, error: "unauthorized" }, 403);
       if (url.pathname === "/api/events" && request.method === "GET") return apiEvents(env);
@@ -1329,9 +2043,10 @@ export default {
       if (url.pathname === "/api/push" && request.method === "POST") {
         // Manual trigger of a scheduled slot, e.g. to test the morning briefing.
         const slot = url.searchParams.get("slot") || "morning";
+        if (slot === "alerts") return json({ ok: true, slot, sent: await flushAlerts(env) });
+        if (!SCHEDULE.some((entry) => entry.slot === slot)) return json({ ok: false, error: "unknown slot" }, 400);
         await env.PFE_STATE.delete(`sent:${slot}:${todayKey()}`);
-        await scheduledPush(env, slot);
-        return json({ ok: true, slot });
+        return json({ ok: true, slot, sent: await scheduledPush(env, slot) });
       }
       return json({ ok: false, error: "not found" }, 404);
     }
@@ -1349,7 +2064,6 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    const slot = CRON_SLOTS[event.cron];
-    if (slot) ctx.waitUntil(scheduledPush(env, slot).catch((error) => console.error("cron error", error)));
+    ctx.waitUntil(tick(env, event.scheduledTime ?? Date.now()).catch((error) => console.error("cron error", error)));
   },
 };

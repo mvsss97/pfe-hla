@@ -1,10 +1,12 @@
 """AI research agents orchestrated from Python.
 
-Three agents run inside the scheduled GitHub Actions pipeline:
+Five agents run inside the scheduled GitHub Actions pipeline:
 
 * **Trieur** — pre-screens titles/abstracts against I1–I5/E1–E8 (suggestions only);
 * **Lecteur** — reads an extracted full text and writes a structured reading sheet;
-* **Synthèse** — compares the sheets and drafts state-of-the-art material.
+* **Synthèse** — compares the sheets and drafts state-of-the-art material;
+* **Veilleur** — summarises the collected AI-security news in simple French;
+* **Traducteur** — writes the French title and abstract shown next to the English.
 
 Two interchangeable backends implement the same ``Runner`` protocol:
 
@@ -20,6 +22,7 @@ were found verbatim. Nothing here records a human screening decision.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -30,7 +33,7 @@ import urllib.error
 import urllib.request
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from string import Template
 from typing import Any, Protocol
@@ -43,12 +46,15 @@ from pfe_hla.screening import TITLE_ABSTRACT_EXCLUSION_CODES
 AGENTS_DIR = Path(__file__).resolve().parents[2] / "agents"
 PROMPT_VERSIONS = {
     "screening": "screening-v1",
-    "reading": "sheet-v1",
+    "reading": "sheet-v2",
     "synthesis": "synthesis-v1",
+    "news": "news-v1",
+    "translation": "translation-v1",
 }
 ACCESS_REGIMES = {"hard-label", "score-based", "white-box", "mixed", "not-applicable", "unknown"}
 CONTRIBUTION_TYPES = {"attack", "defense", "benchmark", "survey", "analysis", "other"}
 MAX_ABSTRACT_CHARS = 2500
+MAX_TRANSLATED_ABSTRACT_CHARS = 2200
 MAX_VOCABULARY_PER_SHEET = 5
 
 
@@ -101,13 +107,23 @@ def select_backend(env: dict[str, str] | None = None) -> str | None:
     return "claude" if has_claude else None
 
 
-# Newest models first; overloaded (503) or retired (404) models are skipped.
+# Ordered by measured latency on the free tier (2026-10-28): the newest names
+# (gemini-3.8-flash, gemini-flash-latest) often hang; overloaded (503), retired
+# (404) or hanging models are skipped and the next one is tried.
 DEFAULT_GEMINI_MODELS = (
-    "gemini-3.8-flash",
-    "gemini-flash-latest",
     "gemini-3.5-flash",
+    "gemini-3-flash-preview",
+    "gemini-3.5-flash-lite",
     "gemini-flash-lite-latest",
     "gemini-3.1-flash-lite",
+    "gemini-3.8-flash",
+)
+# Translation and news summaries: fast "lite" models are enough.
+LIGHT_GEMINI_MODELS = (
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash",
 )
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
@@ -131,6 +147,13 @@ class GeminiRunner:
     max_input_chars: int = 1_200_000
     sleep: Callable[[float], None] = time.sleep
     opener: Callable[..., Any] = urllib.request.urlopen
+
+    def light(self) -> GeminiRunner:
+        """Same key, fast models: for translation and news summaries."""
+
+        if self.models != DEFAULT_GEMINI_MODELS:
+            return self  # an explicit model choice is respected everywhere
+        return replace(self, models=LIGHT_GEMINI_MODELS)
 
     def _inputs(self, cwd: Path) -> str:
         parts = []
@@ -196,7 +219,10 @@ class GeminiRunner:
                     if exc.code in {400, 401, 403} and "API key" in detail:
                         raise AgentError(f"Gemini rejected the API key: {detail}") from exc
                     break  # 404 retired model, 400 unsupported feature: next model
-                except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                except TimeoutError:
+                    failures.append(f"{model}: timeout")
+                    break  # a hanging model usually hangs again: try the next one
+                except (urllib.error.URLError, OSError) as exc:
                     failures.append(f"{model}: {type(exc).__name__}")
                     self.sleep(self.backoff_seconds * (attempt + 1))
                     continue
@@ -342,6 +368,9 @@ class AgentPlan:
     batch_size: int = 25
     max_read: int = 3
     synthesis: bool = True
+    max_news: int = 30
+    max_translate: int = 48
+    translate_batch: int = 12
     screen_turns: int = 8
     read_turns: int = 30
     synthesis_turns: int = 15
@@ -353,6 +382,8 @@ class AgentSummary:
     screened: int = 0
     sheets: int = 0
     synthesis: bool = False
+    news: int = 0
+    translated: int = 0
     errors: list[str] = field(default_factory=list)
     skipped: str = ""
 
@@ -361,6 +392,8 @@ class AgentSummary:
             "screened": self.screened,
             "sheets": self.sheets,
             "synthesis": self.synthesis,
+            "news": self.news,
+            "translated": self.translated,
             "errors": self.errors,
             "skipped": self.skipped,
         }
@@ -600,14 +633,16 @@ def ingest_sheet(
             """
             INSERT OR IGNORE INTO vocabulary(
                 term, translation_fr, definition_en, synonyms_json, example_en,
-                source_paper_id, due_at, created_at
-            ) VALUES (?, ?, ?, '[]', ?, ?, ?, ?)
+                definition_fr, example_fr, source_paper_id, due_at, created_at
+            ) VALUES (?, ?, ?, '[]', ?, ?, ?, ?, ?, ?)
             """,
             (
                 term,
                 str(item.get("traduction_fr", "")).strip() or "—",
                 str(item.get("definition_en", "")).strip() or "—",
                 str(item.get("exemple_en", "")).strip() or "—",
+                str(item.get("definition_fr", "")).strip(),
+                str(item.get("exemple_fr", "")).strip(),
                 paper_id,
                 timestamp,
                 timestamp,
@@ -773,6 +808,249 @@ def run_synthesis(
     return True, []
 
 
+# ─── Veilleur : French summaries of the AI-security news ────────────────────
+
+
+def run_news_summaries(
+    connection: sqlite3.Connection, runner: Runner, workdir: Path, plan: AgentPlan
+) -> tuple[int, list[str]]:
+    rows = list(
+        connection.execute(
+            """
+            SELECT id, kind, title, summary FROM news_items
+            WHERE summary_fr = '' ORDER BY severity = 'alert' DESC, score DESC, id DESC LIMIT ?
+            """,
+            (plan.max_news,),
+        )
+    )
+    if not rows:
+        return 0, []
+    news_dir = workdir / "news"
+    news_dir.mkdir(parents=True, exist_ok=True)
+    (news_dir / "news.json").write_text(
+        json.dumps(
+            [
+                {"id": row["id"], "type": row["kind"], "titre": row["title"],
+                 "texte": (row["summary"] or "")[:700]}
+                for row in rows
+            ],
+            ensure_ascii=False,
+            indent=1,
+        ),
+        encoding="utf-8",
+    )
+    started = utc_now()
+    try:
+        result = runner.run(
+            prompt=load_prompt("news", news_file="news.json"),
+            schema=load_schema("news"),
+            cwd=news_dir,
+            max_turns=plan.screen_turns,
+            timeout=plan.timeout,
+        )
+    except AgentError as exc:
+        log_agent_run(
+            connection, task="news", target=f"{len(rows)} actualités", status="error",
+            started_at=started, detail=str(exc),
+        )
+        connection.commit()
+        return 0, [f"news: {exc}"]
+    wanted = {int(row["id"]) for row in rows}
+    written = 0
+    for item in result.output.get("items", []):
+        try:
+            news_id = int(item.get("id"))
+        except (TypeError, ValueError):
+            continue
+        summary_fr = str(item.get("resume_fr") or "").strip()
+        title_fr = str(item.get("titre_fr") or "").strip()
+        if news_id in wanted and summary_fr:
+            connection.execute(
+                "UPDATE news_items SET summary_fr=?, title_fr=? WHERE id=?",
+                (summary_fr[:600], title_fr[:300], news_id),
+            )
+            written += 1
+    log_agent_run(
+        connection, task="news", target=f"{len(rows)} actualités", status="ok",
+        started_at=started, result=result, detail=f"{written} résumés en français",
+    )
+    connection.commit()
+    return written, []
+
+
+# ─── Traducteur : French title and abstract next to the English ─────────────
+
+
+def translation_source_sha(title: str, abstract: str) -> str:
+    return hashlib.sha256(f"{title}\n{abstract}".encode()).hexdigest()[:16]
+
+
+def translation_candidates(connection: sqlite3.Connection, *, limit: int) -> list[sqlite3.Row]:
+    """Papers whose French version is missing or stale.
+
+    Supervisor picks first, then papers still waiting for a triage decision
+    (they appear on the Telegram cards), then the most recently discovered.
+    """
+
+    rows = connection.execute(
+        """
+        SELECT papers.id, papers.canonical_key, papers.title, papers.abstract,
+               tr.source_sha,
+               EXISTS (SELECT 1 FROM paper_tags t WHERE t.paper_id = papers.id) AS tagged,
+               papers.status IN ('identified', 'screened') AS pending
+        FROM papers LEFT JOIN paper_translations AS tr ON tr.paper_id = papers.id
+        ORDER BY tagged DESC, pending DESC, papers.discovered_at DESC, papers.id DESC
+        """
+    )
+    selected = []
+    for row in rows:
+        abstract = (row["abstract"] or "")[:MAX_TRANSLATED_ABSTRACT_CHARS]
+        if row["source_sha"] != translation_source_sha(row["title"], abstract):
+            selected.append(row)
+            if len(selected) >= limit:
+                break
+    return selected
+
+
+def _translate_vocabulary(
+    connection: sqlite3.Connection, runner: Runner, batch_dir: Path, plan: AgentPlan
+) -> tuple[int, list[str]]:
+    """Give a French definition/example to words written before those fields existed."""
+
+    words = list(
+        connection.execute(
+            """
+            SELECT id, term, definition_en, example_en FROM vocabulary
+            WHERE definition_fr = '' AND definition_en NOT IN ('', '—') LIMIT ?
+            """,
+            (plan.translate_batch * 2,),
+        )
+    )
+    if not words:
+        return 0, []
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    # Same prompt as for papers: the definition plays the title, the example the abstract.
+    records = [
+        {"key": f"word-{row['id']}", "title": row["definition_en"], "abstract": row["example_en"]}
+        for row in words
+    ]
+    (batch_dir / "vocabulary.json").write_text(
+        json.dumps(records, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+    started = utc_now()
+    try:
+        result = runner.run(
+            prompt=load_prompt("translation", batch_file="vocabulary.json"),
+            schema=load_schema("translation"),
+            cwd=batch_dir,
+            max_turns=plan.screen_turns,
+            timeout=plan.timeout,
+        )
+    except AgentError as exc:
+        log_agent_run(
+            connection, task="translation", target="vocabulaire", status="error",
+            started_at=started, detail=str(exc),
+        )
+        connection.commit()
+        return 0, [f"translation vocabulary: {exc}"]
+    finally:
+        (batch_dir / "vocabulary.json").unlink(missing_ok=True)
+    wanted = {f"word-{row['id']}": int(row["id"]) for row in words}
+    written = 0
+    for item in result.output.get("items", []):
+        word_id = wanted.pop(str(item.get("key", "")), None)
+        definition_fr = str(item.get("titre_fr") or "").strip()
+        if word_id is None or not definition_fr:
+            continue
+        connection.execute(
+            "UPDATE vocabulary SET definition_fr=?, example_fr=? WHERE id=?",
+            (definition_fr[:400], str(item.get("resume_fr") or "").strip()[:600], word_id),
+        )
+        written += 1
+    log_agent_run(
+        connection, task="translation", target="vocabulaire", status="ok", started_at=started,
+        result=result, detail=f"{written}/{len(words)} mots traduits",
+    )
+    connection.commit()
+    return written, []
+
+
+def run_translations(
+    connection: sqlite3.Connection, runner: Runner, workdir: Path, plan: AgentPlan
+) -> tuple[int, list[str]]:
+    batch_dir = workdir / "translation"
+    _words, errors = _translate_vocabulary(connection, runner, batch_dir, plan)
+    candidates = translation_candidates(connection, limit=plan.max_translate)
+    written = 0
+    schema = load_schema("translation")
+    for index in range(0, len(candidates), plan.translate_batch):
+        batch = candidates[index : index + plan.translate_batch]
+        name = f"batch-{index // plan.translate_batch + 1:02d}.json"
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        by_key = {}
+        records = []
+        for row in batch:
+            key = paper_key(str(row["canonical_key"]))
+            abstract = (row["abstract"] or "")[:MAX_TRANSLATED_ABSTRACT_CHARS]
+            by_key[key] = (int(row["id"]), translation_source_sha(row["title"], abstract))
+            records.append({"key": key, "title": row["title"], "abstract": abstract})
+        (batch_dir / name).write_text(
+            json.dumps(records, ensure_ascii=False, indent=1), encoding="utf-8"
+        )
+        started = utc_now()
+        try:
+            result = runner.run(
+                prompt=load_prompt("translation", batch_file=name),
+                schema=schema,
+                cwd=batch_dir,
+                max_turns=plan.screen_turns,
+                timeout=plan.timeout,
+            )
+        except AgentError as exc:
+            errors.append(f"translation {name}: {exc}")
+            log_agent_run(
+                connection, task="translation", target=name, status="error",
+                started_at=started, detail=str(exc),
+            )
+            connection.commit()
+            continue
+        count = 0
+        timestamp = utc_now()
+        for item in result.output.get("items", []):
+            target = by_key.pop(str(item.get("key", "")), None)
+            title_fr = str(item.get("titre_fr") or "").strip()
+            if target is None or not title_fr:
+                continue
+            connection.execute(
+                """
+                INSERT INTO paper_translations(
+                    paper_id, title_fr, abstract_fr, source_sha, model, prompt_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(paper_id) DO UPDATE SET
+                    title_fr=excluded.title_fr, abstract_fr=excluded.abstract_fr,
+                    source_sha=excluded.source_sha, model=excluded.model,
+                    prompt_version=excluded.prompt_version, created_at=excluded.created_at
+                """,
+                (
+                    target[0],
+                    title_fr[:400],
+                    str(item.get("resume_fr") or "").strip()[:4000],
+                    target[1],
+                    result.model,
+                    PROMPT_VERSIONS["translation"],
+                    timestamp,
+                ),
+            )
+            count += 1
+        log_agent_run(
+            connection, task="translation", target=name, status="ok", started_at=started,
+            result=result, detail=f"{count}/{len(batch)} articles traduits",
+        )
+        written += count
+        connection.commit()
+    return written, errors
+
+
 def run_agents(
     connection: sqlite3.Connection,
     runner: Runner,
@@ -780,7 +1058,7 @@ def run_agents(
     workdir: Path,
     plan: AgentPlan,
 ) -> AgentSummary:
-    """Run Trieur, Lecteur and Synthèse in order, committing after every task."""
+    """Run Trieur, Lecteur, Synthèse, Veilleur and Traducteur, committing after every task."""
 
     if workdir.exists():
         shutil.rmtree(workdir)
@@ -794,6 +1072,13 @@ def run_agents(
         summary.errors.extend(errors)
     if plan.synthesis:
         summary.synthesis, errors = run_synthesis(connection, runner, workdir, plan)
+        summary.errors.extend(errors)
+    light_runner = runner.light() if hasattr(runner, "light") else runner
+    if plan.max_news > 0:
+        summary.news, errors = run_news_summaries(connection, light_runner, workdir, plan)
+        summary.errors.extend(errors)
+    if plan.max_translate > 0:
+        summary.translated, errors = run_translations(connection, light_runner, workdir, plan)
         summary.errors.extend(errors)
     return summary
 

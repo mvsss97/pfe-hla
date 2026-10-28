@@ -4,12 +4,18 @@
 # What it does (no secret is ever written to the repository):
 #   1. GitHub secret GEMINI_API_KEY        <- GEMINI_API_KEY from .env (free AI agents)
 #   2. GitHub secret DB_BACKUP_PASSPHRASE  <- generated once, kept in .env (encrypted DB backup)
-#   3. Worker secret TELEGRAM_WEBHOOK_SECRET <- generated, then the Telegram webhook is re-registered
+#   3. Worker secrets TELEGRAM_WEBHOOK_SECRET (generated) and GEMINI_API_KEY (the PDF reader's
+#      French translation), then the Telegram webhook and the bot commands are re-registered
 #   4. Starts the daily pipeline once so the agents run right away.
 
 $ErrorActionPreference = "Stop"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+
+function Assert-Success([string]$step) {
+    if ($LASTEXITCODE -ne 0) { throw "$step failed (exit code $LASTEXITCODE)." }
+}
 
 function Read-DotEnv([string]$path) {
     $values = @{}
@@ -47,6 +53,7 @@ if (-not $dotenv["GEMINI_API_KEY"]) {
     throw "GEMINI_API_KEY is missing from .env (get a free key at https://aistudio.google.com/apikey)."
 }
 gh secret set GEMINI_API_KEY --body $dotenv["GEMINI_API_KEY"]
+Assert-Success "gh secret set GEMINI_API_KEY"
 Write-Host "[1/4] GEMINI_API_KEY saved in GitHub secrets." -ForegroundColor Green
 
 # 2. Passphrase of the encrypted database backup (kept locally for recovery)
@@ -56,13 +63,15 @@ if (-not $passphrase) {
     Add-Content -Encoding UTF8 -Path $envPath -Value "`r`n# Encrypted backup of the research database (branch research-db)`r`nDB_BACKUP_PASSPHRASE=$passphrase"
 }
 gh secret set DB_BACKUP_PASSPHRASE --body $passphrase
+Assert-Success "gh secret set DB_BACKUP_PASSPHRASE"
 Write-Host "[2/4] DB_BACKUP_PASSPHRASE saved in GitHub secrets (copy kept in .env)." -ForegroundColor Green
 
-# 3. Private webhook secret for the Telegram bot, then re-register the webhook
+# 3. Private webhook secret + Gemini key for the bot (PDF reader), then re-register the webhook
 $webhookSecret = New-RandomSecret 48
+$workerSecrets = @{ TELEGRAM_WEBHOOK_SECRET = $webhookSecret; GEMINI_API_KEY = $dotenv["GEMINI_API_KEY"] }
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("pfe-secret-" + [guid]::NewGuid().ToString() + ".json")
 try {
-    [System.IO.File]::WriteAllText($tmp, (@{ TELEGRAM_WEBHOOK_SECRET = $webhookSecret } | ConvertTo-Json -Compress))
+    [System.IO.File]::WriteAllText($tmp, ($workerSecrets | ConvertTo-Json -Compress))
     Push-Location (Join-Path $root "worker")
     try {
         npx --yes wrangler secret bulk $tmp
@@ -78,9 +87,10 @@ $pairing = $dotenv["TELEGRAM_PAIRING_CODE"]
 $setupUrl = "https://pfe-hla-bot.massiresacko97.workers.dev/setup?key=" + [uri]::EscapeDataString($pairing)
 $result = Invoke-RestMethod -Uri $setupUrl -Method Get
 if (-not $result.ok) { throw "Webhook re-registration failed." }
-Write-Host "[3/4] Telegram webhook protected by a private secret ($($result.commands) commands in the menu)." -ForegroundColor Green
+Write-Host "[3/4] Bot updated: private webhook secret, Gemini key for the PDF reader, $($result.commands) commands in the menu." -ForegroundColor Green
 
 # 4. Run the pipeline once now
 gh workflow run daily.yml
+Assert-Success "gh workflow run"
 Write-Host "[4/4] Pipeline started: https://github.com/mvsss97/pfe-hla/actions" -ForegroundColor Green
 Write-Host "Done. The bot will message you when the agents finish (about 10-20 minutes)." -ForegroundColor Cyan

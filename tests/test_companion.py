@@ -93,7 +93,7 @@ class CompanionDatabaseTests(unittest.TestCase):
     def test_seed_is_idempotent_and_prisma_is_derived(self) -> None:
         first = self.seed()
         second = self.seed()
-        self.assertEqual(first, {"papers": 9, "vocabulary": 20})
+        self.assertEqual(first, {"papers": 9, "vocabulary": 99})
         self.assertEqual(second, {"papers": 0, "vocabulary": 0})
         counts = compute_prisma_counts(self.connection)
         self.assertEqual(counts.identified, 0)

@@ -17,7 +17,7 @@ from pfe_hla.agents import (
     run_agents,
     synthesis_needed,
 )
-from pfe_hla.db import connect, init_database
+from pfe_hla.db import SCHEMA_VERSION, connect, init_database
 from pfe_hla.export import build_bot_state, build_public_state, build_sheets_state
 from pfe_hla.fulltext import PAGE_MARKER
 from pfe_hla.library import paper_key, paper_key_index, seed_library
@@ -142,6 +142,20 @@ class FakeRunner:
                 raise AgentError("simulated failure")
             assert (cwd / "fulltext.txt").exists()
             return AgentResult(sheet_output(), model="fake-model", cost_usd=0.01)
+        if "titres et résumés" in prompt:
+            batch_name = next(
+                word.strip("`") for word in prompt.split() if word.strip("`").endswith(".json")
+            )
+            records = json.loads((cwd / batch_name).read_text(encoding="utf-8"))
+            items = [
+                {
+                    "key": record["key"],
+                    "titre_fr": f"FR {record['title']}",
+                    "resume_fr": f"FR {record['abstract']}",
+                }
+                for record in records
+            ]
+            return AgentResult({"items": items}, model="fake-lite")
         if "synthèse" in prompt:
             sheets = json.loads((cwd / "sheets.json").read_text(encoding="utf-8"))
             return AgentResult(
@@ -262,7 +276,7 @@ class MigrationTests(unittest.TestCase):
             connection.close()
         self.assertIn("protocol_version", columns)
         self.assertTrue({"ai_screening", "paper_sheets", "triage_events"} <= tables)
-        self.assertEqual(version, 2)
+        self.assertEqual(version, SCHEMA_VERSION)
 
 
 class KeyAndProtocolTests(PipelineTestCase):
@@ -391,7 +405,18 @@ class AgentTests(PipelineTestCase):
             row["task"]: row["status"]
             for row in self.connection.execute("SELECT * FROM agent_runs")
         }
-        self.assertEqual(statuses, {"screening": "ok", "reading": "ok", "synthesis": "ok"})
+        self.assertEqual(
+            statuses,
+            {"screening": "ok", "reading": "ok", "synthesis": "ok", "translation": "ok"},
+        )
+        self.assertEqual(summary.translated, len(self.paper_ids))
+        # The word written by the reading agent without French got it from the translator.
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT definition_fr FROM vocabulary WHERE term='top label'"
+            ).fetchone()["definition_fr"],
+            "FR The predicted class.",
+        )
 
         public = build_public_state(self.connection)
         sheets = build_sheets_state(self.connection)

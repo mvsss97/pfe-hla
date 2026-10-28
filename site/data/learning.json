@@ -361,6 +361,235 @@
           }
         }
       ]
+    },
+    {
+      "id": "these",
+      "emoji": "📘",
+      "title": "Thèse de l'encadrant : l'état de l'art",
+      "intro": "Ces leçons préparent la lecture des chapitres 1 à 3 de la thèse de ton encadrant (le PDF reste sur ton PC : il n'est pas publié ici). Elles expliquent avec nos mots les notions du domaine et citent des articles publiés. Lis une leçon, puis la partie de la thèse indiquée dans « 🎓 Encadrant → Plan de lecture ».",
+      "lessons": [
+        {
+          "id": "t1",
+          "title": "Formuler une attaque adversariale sur le texte (thèse § 3.2.1)",
+          "content": "Un classifieur f reçoit un texte x0 = (w1, …, wn) et prédit sa classe yg (positif, négatif…).\nUne attaque cherche un texte x_adv qui remplit deux conditions :\n1. le modèle se trompe : sa prédiction sur x_adv n'est plus yg ;\n2. x_adv reste proche de x0 : peu de mots changés, même sens (similarité mesurée par exemple avec l'encodeur USE), texte correct.\nSelon TextAttack (Morris et al., 2020), toute attaque se décompose en trois briques :\n• un algorithme de recherche (quels mots changer, dans quel ordre) ;\n• des transformations (synonymes d'un espace d'embeddings, mots proposés par un modèle de langue masqué, fusion de mots, échange de caractères) ;\n• des contraintes (similarité cosinus, nature grammaticale POS…) qui rejettent les modifications qui abîment le sens.\nLe texte est discret : on ne modifie pas un mot « d'un tout petit peu » comme un pixel, on le remplace entièrement. L'espace de recherche est donc combinatoire.",
+          "example": "Décrire une attaque avec ces trois briques permet de comparer des articles très différents : c'est la grille des fiches de lecture.",
+          "terms": [
+            ["search algorithm", "algorithme de recherche"],
+            ["transformation", "transformation"],
+            ["constraint", "contrainte"],
+            ["perturbation rate", "taux de perturbation"]
+          ],
+          "quiz": {
+            "question": "Quelles sont les trois briques d'une attaque selon TextAttack ?",
+            "options": ["Recherche, transformations, contraintes", "Données, modèle, métrique", "Initialisation, mutation, croisement"],
+            "answer": 0,
+            "explain": "La recherche choisit où modifier, les transformations proposent les candidats, les contraintes filtrent ce qui change le sens."
+          }
+        },
+        {
+          "id": "t2",
+          "title": "Attaques gloutonnes et classement des mots (thèse § 3.2.2 a, § 3.2.4)",
+          "content": "Une attaque gloutonne avance pas à pas en prenant à chaque étape le meilleur choix immédiat.\nÉtape 1 : noter l'importance de chaque position avec une méthode d'explication locale : suppression du mot (leave-one-out), remplacement par [UNK], gradients, attention…\nÉtape 2 : modifier les mots dans l'ordre d'importance jusqu'à ce que la classe change.\nÉtape 3 : un contrôleur vérifie que chaque remplacement respecte les contraintes de sens et de grammaire.\nTextFooler (Jin et al., AAAI 2020) : importance = baisse de la probabilité de la vraie classe quand on supprime le mot ; synonymes de même nature grammaticale.\nPWWS (Ren et al., ACL 2019) : combine la saillance du mot et l'effet du meilleur synonyme.\nLa thèse distingue les méthodes du premier ordre (on classe seulement les positions : rapide, peu de requêtes, mais parfois plus de mots changés) et du second ordre (on teste aussi l'effet des substitutions avant de choisir l'ordre, comme PWWS, CLARE ou BESA : attaques plus fines mais plus de requêtes).",
+          "example": "Si supprimer « terrible » fait passer la probabilité « négatif » de 0,95 à 0,40, ce mot est très important pour la décision.",
+          "terms": [
+            ["greedy search", "recherche gloutonne"],
+            ["leave-one-out", "suppression un par un"],
+            ["word importance ranking", "classement d'importance des mots"],
+            ["second-order method", "méthode du second ordre"]
+          ],
+          "quiz": {
+            "question": "Qu'est-ce qui distingue une méthode du second ordre d'une méthode du premier ordre ?",
+            "options": ["Elle teste l'effet des substitutions avant de fixer l'ordre des mots", "Elle n'utilise aucune requête", "Elle n'attaque que les images"],
+            "answer": 0,
+            "explain": "Le premier ordre classe seulement les positions ; le second ordre regarde aussi ce que chaque remplacement produit, ce qui coûte plus de requêtes."
+          }
+        },
+        {
+          "id": "t3",
+          "title": "Attaques avec un modèle de langue masqué (thèse § 3.2.2 a-2)",
+          "content": "Au lieu d'un dictionnaire de synonymes, on masque un mot et on demande à un modèle de langue masqué (BERT) ce qui irait à sa place : les candidats collent mieux au contexte.\nBAE (Garg & Ramakrishnan, EMNLP 2020) et BERT-Attack (Li et al., EMNLP 2020) génèrent ainsi leurs remplacements.\nCLARE (Li et al., NAACL 2021) ajoute trois actions contextuelles : remplacer un mot, insérer un mot, fusionner deux mots voisins en un seul.\nAvantage : des phrases plus naturelles. Limite : le modèle de langue peut proposer un mot qui change le sens (par exemple un antonyme). Les contraintes de similarité restent indispensables.",
+          "example": "« The movie was [MASK] » → le MLM propose « great », « boring », « fine »… à filtrer selon le sens.",
+          "terms": [
+            ["masked language model", "modèle de langue masqué"],
+            ["contextual perturbation", "perturbation contextuelle"],
+            ["insertion", "insertion"],
+            ["merge", "fusion"]
+          ],
+          "quiz": {
+            "question": "Quel est l'intérêt principal d'un modèle de langue masqué pour proposer les candidats ?",
+            "options": ["Des remplacements plus naturels dans le contexte", "Il garantit que le sens est conservé", "Il supprime le besoin de requêtes"],
+            "answer": 0,
+            "explain": "Le MLM tient compte du contexte, mais il ne garantit pas le sens : il faut toujours filtrer."
+          }
+        },
+        {
+          "id": "t4",
+          "title": "White-box et hard-label (thèse § 3.2.2 a-3, a-4)",
+          "content": "White-box : l'attaquant voit les gradients du modèle. HotFlip (Ebrahimi et al., ACL 2018) s'en sert pour choisir le remplacement qui fait le plus monter l'erreur.\nHard-label (ou decision-based) : l'attaquant ne voit que la classe prédite. C'est le cas d'une API réelle, et le plus difficile : aucun score ne guide la recherche.\nHLBB (Maheshwary et al., AAAI 2021) : 1) initialisation par substitutions aléatoires jusqu'à obtenir un exemple adversarial ; 2) on remet les mots originaux inutiles ; 3) un algorithme génétique augmente la similarité avec le texte original.\nTextHoaxer (Ye et al., AAAI 2022) optimise une matrice de perturbation dans l'espace continu des embeddings, avec une contrainte de similarité par paire de mots et une contrainte de parcimonie (garder le maximum de mots originaux), sous un budget de requêtes.\nTextHacker (Yu et al., Findings EMNLP 2022) combine une recherche locale et une importance des mots apprise à partir de l'historique de l'attaque.",
+          "example": "Ton PFE se place dans ce cadre hard-label : estimer quels mots comptent quand on ne voit que l'étiquette.",
+          "terms": [
+            ["decision-based attack", "attaque fondée sur la décision"],
+            ["white-box attack", "attaque en boîte blanche"],
+            ["sparsity constraint", "contrainte de parcimonie"],
+            ["attack history", "historique de l'attaque"]
+          ],
+          "quiz": {
+            "question": "En hard-label, que renvoie le modèle attaqué à chaque requête ?",
+            "options": ["Seulement la classe prédite", "Les probabilités de chaque classe", "Les gradients"],
+            "answer": 0,
+            "explain": "C'est pour cela que les méthodes soft-label (baisse de probabilité) ne s'appliquent pas directement."
+          }
+        },
+        {
+          "id": "t5",
+          "title": "Faisceau, best-first et métaheuristiques (thèse § 3.2.2 b-c, 3.2.3, 3.2.5)",
+          "content": "Recherche en faisceau (beam search) : on garde les k meilleures phrases partielles à chaque étape au lieu d'une seule.\nBest-first search (utilisée par Ivgi & Berant, EMNLP 2021) : on explore d'abord le nœud le plus prometteur et on peut revenir en arrière.\nMétaheuristiques : algorithme génétique (Alzantot et al., EMNLP 2018 : population, croisement, mutation), essaim particulaire (Zang et al., ACL 2020), recuit simulé (BESA, IJCAI 2021 : accepte parfois une solution moins bonne pour sortir d'un optimum local).\nComparaisons publiées : selon Xie et al. (2022), PWWS, TextFooler et le GA modifient peu de mots, mais PWWS et le GA demandent beaucoup de requêtes. Yoo et al. (2020) montrent qu'on ne compare des algorithmes de recherche qu'à budget de requêtes, transformations et contraintes identiques.",
+          "example": "Plus de requêtes donne souvent de meilleures attaques : un gain n'a de sens que mesuré à budget égal.",
+          "terms": [
+            ["beam search", "recherche en faisceau"],
+            ["best-first search", "recherche du meilleur d'abord"],
+            ["genetic algorithm", "algorithme génétique"],
+            ["simulated annealing", "recuit simulé"]
+          ],
+          "quiz": {
+            "question": "Selon Yoo et al. (2020), comment comparer équitablement deux méthodes de recherche ?",
+            "options": [
+              "À budget de requêtes, transformations et contraintes identiques",
+              "En reprenant le meilleur chiffre publié par chaque article",
+              "En comparant uniquement le taux de succès"
+            ],
+            "answer": 0,
+            "explain": "Sinon on compare des espaces de recherche ou des budgets différents, pas des algorithmes."
+          }
+        },
+        {
+          "id": "t6",
+          "title": "Les défenses (thèse § 3.3)",
+          "content": "1. Renforcer le modèle : entraînement adversarial (A2T, Yoo & Qi, Findings EMNLP 2021, propose une attaque rapide pour cela) ; augmentation de données (MixADA, Si et al., Findings ACL 2021) ; randomisation guidée par la fréquence des mots (ADFAR, Bao et al., Findings ACL 2021).\n2. Détecter : FGWS (Mozes et al., EACL 2021) remplace les mots rares par des synonymes fréquents et regarde si la prédiction change ; WDR (Mosca et al., ACL 2022) observe la réaction du modèle quand on retire des mots ; d'autres détecteurs utilisent un modèle de langue masqué.\n3. Certifier : prouver qu'aucune substitution autorisée ne change la prédiction, par propagation d'intervalles (Jia et al., EMNLP 2019) ou lissage aléatoire sur les synonymes (SAFER, Ye et al., ACL 2020).\nPour ton PFE : une attaque sérieuse se teste aussi contre au moins une défense, et une défense se teste contre des attaques adaptées.",
+          "example": "Beaucoup d'attaques introduisent des mots rares : c'est l'idée exploitée par FGWS.",
+          "terms": [
+            ["adversarial training", "entraînement adversarial"],
+            ["detection", "détection"],
+            ["certified robustness", "robustesse certifiée"],
+            ["randomized smoothing", "lissage aléatoire"]
+          ],
+          "quiz": {
+            "question": "Sur quelle observation repose FGWS ?",
+            "options": [
+              "Les attaques remplacent souvent des mots fréquents par des mots rares",
+              "Les attaques ajoutent toujours de la ponctuation",
+              "Les attaques allongent toujours le texte"
+            ],
+            "answer": 0,
+            "explain": "Remettre des synonymes fréquents annule souvent l'effet de l'attaque, ce qui la trahit."
+          }
+        }
+      ]
+    },
+    {
+      "id": "hardlabel",
+      "emoji": "🧭",
+      "title": "Attaques hard-label récentes (liste de l'encadrant)",
+      "intro": "Les articles que ton encadrant veut discuter avec toi. Ces leçons donnent une grille commune pour les lire ; le détail de chaque article est dans sa fiche écrite par l'agent lecteur (page « Encadrant » du site).",
+      "lessons": [
+        {
+          "id": "h1",
+          "title": "Le squelette commun : initialiser, réduire, optimiser",
+          "content": "La plupart des attaques hard-label récentes reprennent le schéma de HLBB (Maheshwary et al., AAAI 2021) :\n1. Initialisation : trouver n'importe quel texte adversarial, par exemple en remplaçant beaucoup de mots au hasard jusqu'à ce que la classe change.\n2. Réduction : remettre un à un les mots originaux tant que le texte reste adversarial, pour garder le moins de changements possible.\n3. Optimisation : améliorer le texte (plus de similarité, moins de mots changés) sans jamais repasser du mauvais côté de la frontière de décision.\nChaque question posée au modèle coûte une requête : toute la difficulté est de faire ces étapes avec peu de requêtes.",
+          "example": "Grille de lecture : initialisation · réduction de l'espace · optimisation · filtres avant requête · importance des mots. Les fiches de l'agent lecteur la remplissent pour chaque article.",
+          "terms": [
+            ["initialization", "initialisation"],
+            ["search space reduction", "réduction de l'espace de recherche"],
+            ["decision boundary", "frontière de décision"],
+            ["query efficiency", "efficacité en requêtes"]
+          ],
+          "quiz": {
+            "question": "Pourquoi faut-il d'abord un exemple adversarial de départ en hard-label ?",
+            "options": [
+              "Tant que la classe ne change pas, l'oracle répond toujours pareil : aucun signal ne guide la recherche",
+              "Pour entraîner le modèle attaqué",
+              "Pour calculer les probabilités du modèle"
+            ],
+            "answer": 0,
+            "explain": "Une fois la frontière franchie, chaque requête dit si une modification garde ou perd l'attaque : c'est le signal exploité ensuite."
+          }
+        },
+        {
+          "id": "h2",
+          "title": "Moins de requêtes : guider l'optimisation",
+          "content": "Les travaux suivants gardent le squelette mais réduisent son coût :\n• SSPAttack (Liu et al., AAAI 2023) : améliore l'exemple par des échanges de mots ciblés, sans population ni estimation de gradient.\n• HQA-Attack (Liu et al., NeurIPS 2023) : remet d'abord le maximum de mots originaux, puis optimise les substitutions restantes (à vérifier dans sa fiche : c'est une question pour l'encadrant).\n• QEAttack (Scientific Reports, 2025) et TDE (évolution différentielle avec une très petite population) visent aussi l'efficacité en requêtes.\nPour chaque article, demande-toi : quelles requêtes sont comptées ? Celles de l'initialisation et du classement des mots sont-elles dans le budget annoncé ?",
+          "example": "Deux articles qui ne comptent pas les mêmes requêtes ne sont pas comparables, même avec le même chiffre de budget.",
+          "terms": [
+            ["query budget", "budget de requêtes"],
+            ["differential evolution", "évolution différentielle"],
+            ["population", "population"],
+            ["query accounting", "comptage des requêtes"]
+          ],
+          "quiz": {
+            "question": "Pour comparer deux attaques hard-label, quelle vérification est indispensable ?",
+            "options": [
+              "Que toutes les requêtes (initialisation, classement des mots, optimisation) sont comptées de la même façon",
+              "Que les deux articles ont le même nombre de pages",
+              "Que les auteurs sont les mêmes"
+            ],
+            "answer": 0,
+            "explain": "Le comptage des requêtes est une menace à la validité fréquente dans ce domaine."
+          }
+        },
+        {
+          "id": "h3",
+          "title": "Classer les mots sans score : le cœur de ton PFE",
+          "content": "En soft-label, l'importance d'un mot = la baisse de probabilité quand on le retire. En hard-label, cette baisse est invisible : la réponse reste la même classe tant qu'on ne franchit pas la frontière.\nIdées utilisées dans la littérature :\n• partir d'un exemple adversarial et regarder quels mots, remis à l'original, font revenir la classe d'origine ;\n• une explication locale à partir des seules étiquettes : LimeAttack (Zhu et al., AAAI 2024) approxime l'importance avec une méthode de type LIME ;\n• apprendre l'importance au fil des requêtes (TextHacker, 2022) ou avec un modèle auxiliaire.\nTon PFE compare, à budget égal, des façons de classer les mots quand on ne voit que l'étiquette (suppression, masquage, vote de voisinage).",
+          "example": "Si remettre « awful » à la place de « dreadful » fait revenir la classe « négatif », ce mot porte l'attaque.",
+          "terms": [
+            ["label-only", "étiquette seule"],
+            ["local explanation", "explication locale"],
+            ["word importance", "importance des mots"],
+            ["neighbourhood", "voisinage"]
+          ],
+          "quiz": {
+            "question": "Pourquoi le classement par suppression ne marche-t-il pas directement en hard-label ?",
+            "options": [
+              "Retirer un mot ne change souvent pas la classe : on n'observe aucune différence",
+              "Les phrases sont trop courtes",
+              "Le modèle refuse les phrases modifiées"
+            ],
+            "answer": 0,
+            "explain": "Sans score, il faut d'autres signaux : franchissements de frontière, votes sur des voisins, historique des requêtes."
+          }
+        },
+        {
+          "id": "h4",
+          "title": "Explorer sans gaspiller : hybrides, échantillonnage, filtres",
+          "content": "L'optimisation hard-label doit équilibrer exploration (essayer de nouvelles régions) et exploitation (affiner la meilleure solution).\n• Les méthodes à population (GA, évolution différentielle) explorent largement mais coûtent beaucoup de requêtes.\n• La recherche locale (un mot à la fois) est économe mais peut rester bloquée dans un optimum local.\n• Les méthodes hybrides combinent plusieurs stratégies (HyGloadAttack se présente comme une optimisation hybride) ; d'autres échantillonnent les candidats selon ce que les requêtes passées ont appris.\n• Les filtres avant requête (contraintes de sens, candidats déjà testés, candidats peu prometteurs) évitent de dépenser une requête pour rien.",
+          "example": "Dans chaque fiche, la ligne « filtres avant requête » de la grille hard-label dit ce que l'attaque écarte sans interroger le modèle.",
+          "terms": [["exploration", "exploration"], ["exploitation", "exploitation"], ["local search", "recherche locale"], ["sampling", "échantillonnage"]],
+          "quiz": {
+            "question": "À quoi sert un filtre avant requête ?",
+            "options": ["À écarter un candidat sans dépenser de requête sur le modèle attaqué", "À rendre le modèle attaqué plus robuste", "À traduire le texte"],
+            "answer": 0,
+            "explain": "Chaque requête économisée peut servir ailleurs dans le budget."
+          }
+        },
+        {
+          "id": "h5",
+          "title": "Comparer équitablement (ce que l'encadrant attend)",
+          "content": "Les chiffres de deux articles ne sont comparables que si :\n1. mêmes datasets et mêmes exemples attaqués (souvent 1 000 exemples de MR, AG News, Yelp, IMDB…) ;\n2. mêmes modèles cibles (souvent BERT, WordCNN, WordLSTM), entraînés de la même façon ;\n3. même budget de requêtes, en comptant toutes les requêtes ;\n4. mêmes contraintes (seuil de similarité, taux de perturbation maximal, filtres) ;\n5. plusieurs graines aléatoires, avec moyenne et écart-type.\nSinon on écrit « non comparable directement » et on explique pourquoi. La page Comparatif du site applique cette règle.",
+          "example": "95 % de succès avec 10 000 requêtes et 85 % avec 1 000 requêtes ne disent pas quelle attaque est la meilleure.",
+          "terms": [
+            ["fair comparison", "comparaison équitable"],
+            ["baseline", "méthode de référence"],
+            ["standard deviation", "écart-type"],
+            ["random seed", "graine aléatoire"]
+          ],
+          "quiz": {
+            "question": "Un article annonce 95 % de succès avec 10 000 requêtes, un autre 85 % avec 1 000. Que conclure ?",
+            "options": ["Rien directement : il faut comparer à budget égal", "Le premier est meilleur", "Le second est meilleur"],
+            "answer": 0,
+            "explain": "Il faut relancer les deux attaques dans le même cadre, ou au minimum comparer les courbes succès/requêtes."
+          }
+        }
+      ]
     }
   ],
   "redaction": [
@@ -501,5 +730,84 @@
     {"from": 13, "to": 14, "goal": "Benchmark principal", "exit": "Artefacts bruts sauvegardés", "tasks": ["Lancer les runs finaux avec 3 graines"]},
     {"from": 15, "to": 15, "goal": "Statistiques, ablations, limites", "exit": "Tableaux recalculables", "tasks": ["Calculer IC bootstrap et tests McNemar/Wilcoxon"]},
     {"from": 16, "to": 16, "goal": "Rapport et démonstration", "exit": "Code, rapport et slides cohérents", "tasks": ["Relecture finale et répétition de la soutenance"]}
-  ]
+  ],
+  "supervisor": {
+    "thesisNote": "Le PDF de la thèse (chapitres 1 à 3) est sur ton PC ; il n'est pas publié sur le site. Coche chaque partie lue.",
+    "thesisPlan": [
+      {
+        "id": "p1",
+        "title": "Ch. 1 — Introduction générale",
+        "pages": "PDF p. 13–16",
+        "goal": "Savoir dire en 3 phrases le problème traité et le plan de la thèse.",
+        "lesson": "m4"
+      },
+      {
+        "id": "p2",
+        "title": "Ch. 2.2 — IA, recherche, machine learning, deep learning",
+        "pages": "PDF p. 18–25",
+        "goal": "Revoir le vocabulaire de base (apprentissage, architectures, entraînement). Survole si tu le connais.",
+        "lesson": "m2"
+      },
+      {
+        "id": "p3",
+        "title": "Ch. 2.3 — Sécurité du deep learning et attaques adversariales",
+        "pages": "PDF p. 26–34",
+        "goal": "Définir une attaque adversariale, ses causes possibles et ses catégories (white-box, soft-label, hard-label).",
+        "lesson": "t1"
+      },
+      {
+        "id": "p4",
+        "title": "Ch. 2.4 — Bases du NLP",
+        "pages": "PDF p. 34–41",
+        "goal": "Comprendre comment un texte devient des vecteurs qu'un modèle classe.",
+        "lesson": "m3"
+      },
+      {
+        "id": "p5",
+        "title": "Ch. 3.2.1 — Formulation du problème",
+        "pages": "PDF p. 44–45",
+        "goal": "Écrire les deux conditions d'une attaque et nommer ses trois briques : recherche, transformations, contraintes.",
+        "lesson": "t1"
+      },
+      {
+        "id": "p6",
+        "title": "Ch. 3.2.2 — Attaques heuristiques (glouton, MLM, white-box, hard-label, faisceau, best-first)",
+        "pages": "PDF p. 45–55",
+        "goal": "Pour chaque attaque citée : comment elle classe les mots, d'où viennent ses candidats, quelle recherche.",
+        "lesson": "t2"
+      },
+      {
+        "id": "p7",
+        "title": "Ch. 3.2.3–3.2.5 — Métaheuristiques, premier/second ordre, comparaison",
+        "pages": "PDF p. 55–59",
+        "goal": "Expliquer la différence premier/second ordre et pourquoi le budget de requêtes compte.",
+        "lesson": "t5"
+      },
+      {
+        "id": "p8",
+        "title": "Ch. 3.3 — Défenses (renforcement, détection, certification)",
+        "pages": "PDF p. 59–66",
+        "goal": "Citer une défense de chaque famille et dire contre quoi elle protège.",
+        "lesson": "t6"
+      },
+      {
+        "id": "p9",
+        "title": "Bibliographie",
+        "pages": "PDF p. 67+",
+        "goal": "Repérer les articles à lire en entier : ils sont dans la page Encadrant, avec leur fiche.",
+        "lesson": "h1"
+      }
+    ],
+    "questions": [
+      "La présentation porte sur des attaques hard-label en vision (HopSkipJump, CIFAR-10). Le PFE reste-t-il centré sur le texte (NLP), la vision servant d'inspiration ?",
+      "Parmi les articles du document « Related work hard label », lesquels lire en premier pour en discuter ensemble ?",
+      "La description de HQA-Attack dans le document semble différer de l'article (NeurIPS 2023) : quelle lecture faut-il retenir ?",
+      "AGA (PPSN 2022) : pouvez-vous nous donner la référence exacte (titre, auteurs) ?",
+      "Quel cadre de comparaison voulez-vous : datasets (MR, AG News, IMDB…), modèles cibles (BERT, WordCNN, WordLSTM), budget de requêtes ?",
+      "Comment compter les requêtes : celles de l'initialisation et du classement des mots doivent-elles entrer dans le budget ?",
+      "Peut-on réutiliser le code de vos travaux comme baseline (dépôt, versions) ?",
+      "Le protocole PRISMA v1 (requêtes, critères I1–I5 / E1–E8) vous convient-il ? Nous le marquerons « validé » ensuite.",
+      "Faut-il évaluer l'attaque contre au moins une défense (par exemple FGWS ou l'entraînement adversarial) ?"
+    ]
+  }
 }

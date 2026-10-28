@@ -284,6 +284,10 @@ def _has_row(connection: sqlite3.Connection, table: str, paper_id: int) -> bool:
         "paper_analysis",
         "paper_documents",
         "screening_events",
+        "triage_events",
+        "paper_sheets",
+        "reading_queue",
+        "paper_translations",
     }
     if table not in allowed:
         raise ValueError("Unsupported table")
@@ -328,6 +332,7 @@ def deduplicate_by_normalized_title(connection: sqlite3.Connection) -> int:
                     "paper_analysis",
                     "paper_documents",
                     "evidence",
+                    "triage_events",
                 )
             )
         ]
@@ -375,7 +380,13 @@ def deduplicate_by_normalized_title(connection: sqlite3.Connection) -> int:
                 (target_id, source_id),
             )
             connection.execute("DELETE FROM paper_hits WHERE paper_id=?", (source_id,))
-            for table in ("screening_events", "decisions", "evidence"):
+            for table in (
+                "screening_events",
+                "decisions",
+                "evidence",
+                "ai_screening",
+                "triage_events",
+            ):
                 connection.execute(
                     f"UPDATE {table} SET paper_id=? WHERE paper_id=?",  # noqa: S608
                     (target_id, source_id),
@@ -384,7 +395,20 @@ def deduplicate_by_normalized_title(connection: sqlite3.Connection) -> int:
                 "UPDATE vocabulary SET source_paper_id=? WHERE source_paper_id=?",
                 (target_id, source_id),
             )
-            for table in ("paper_analysis", "paper_documents"):
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO paper_tags(paper_id, tag, note_json, tagged_at)
+                SELECT ?, tag, note_json, tagged_at FROM paper_tags WHERE paper_id=?
+                """,
+                (target_id, source_id),
+            )
+            for table in (
+                "paper_analysis",
+                "paper_documents",
+                "paper_sheets",
+                "reading_queue",
+                "paper_translations",
+            ):
                 if _has_row(connection, table, source_id) and not _has_row(
                     connection, table, target_id
                 ):
@@ -525,8 +549,8 @@ def seed_library(
             """
             INSERT OR IGNORE INTO vocabulary(
                 term, translation_fr, definition_en, synonyms_json, example_en,
-                due_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                definition_fr, example_fr, due_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 word["term"],
@@ -534,11 +558,22 @@ def seed_library(
                 word["definition_en"],
                 json.dumps(word.get("synonyms", []), ensure_ascii=False),
                 word["example_en"],
+                word.get("definition_fr", ""),
+                word.get("example_fr", ""),
                 timestamp,
                 timestamp,
             ),
         )
         vocabulary_inserted += max(result.rowcount, 0)
+        # Words seeded before the French fields existed get them without
+        # touching their spaced-repetition state.
+        connection.execute(
+            """
+            UPDATE vocabulary SET definition_fr=?, example_fr=?
+            WHERE term=? AND definition_fr='' AND example_fr=''
+            """,
+            (word.get("definition_fr", ""), word.get("example_fr", ""), word["term"]),
+        )
     return {"papers": inserted, "vocabulary": vocabulary_inserted}
 
 

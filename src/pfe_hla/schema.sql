@@ -152,6 +152,8 @@ CREATE TABLE IF NOT EXISTS vocabulary (
     definition_en TEXT NOT NULL,
     synonyms_json TEXT NOT NULL DEFAULT '[]',
     example_en TEXT NOT NULL,
+    definition_fr TEXT NOT NULL DEFAULT '',
+    example_fr TEXT NOT NULL DEFAULT '',
     source_paper_id INTEGER REFERENCES papers(id) ON DELETE SET NULL,
     ease REAL NOT NULL DEFAULT 2.5,
     interval_days INTEGER NOT NULL DEFAULT 0,
@@ -266,6 +268,48 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_runs_started ON agent_runs(started_at DESC);
+
+-- Schema v3: curated tags (supervisor reading list) and the AI-security news watch.
+
+CREATE TABLE IF NOT EXISTS paper_tags (
+    paper_id INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+    tag TEXT NOT NULL,
+    note_json TEXT NOT NULL DEFAULT '{}',
+    tagged_at TEXT NOT NULL,
+    PRIMARY KEY (paper_id, tag)
+);
+
+CREATE TABLE IF NOT EXISTS news_items (
+    id INTEGER PRIMARY KEY,
+    source TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    title_fr TEXT NOT NULL DEFAULT '',
+    url TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    summary_fr TEXT NOT NULL DEFAULT '',
+    published_at TEXT NOT NULL DEFAULT '',
+    collected_at TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info' CHECK (severity IN ('info', 'notable', 'alert')),
+    score REAL NOT NULL DEFAULT 0,
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    extra_json TEXT NOT NULL DEFAULT '{}',
+    UNIQUE (source, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_collected ON news_items(collected_at DESC);
+
+-- French title and abstract written by the translator agent (the English stays the reference).
+CREATE TABLE IF NOT EXISTS paper_translations (
+    paper_id INTEGER PRIMARY KEY REFERENCES papers(id) ON DELETE CASCADE,
+    title_fr TEXT NOT NULL DEFAULT '',
+    abstract_fr TEXT NOT NULL DEFAULT '',
+    source_sha TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    prompt_version TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS experiments (
     id INTEGER PRIMARY KEY,

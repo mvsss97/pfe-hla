@@ -26,4 +26,4 @@ jobs:
           node-version: "22"
       - name: Telegram bot offline tests
         working-directory: worker
-        run: node --test test/worker.test.mjs
+        run: node --test test/worker.test.mjs test/reader-layout.test.mjs

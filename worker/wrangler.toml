@@ -6,11 +6,14 @@ compatibility_date = "2024-09-01"
 SITE_URL = "https://pfe-hla.pages.dev"
 
 # Secrets (never in this file): set them with `wrangler secret put NAME`
-#   TELEGRAM_BOT_TOKEN, TELEGRAM_PAIRING_CODE, BOT_WEBHOOK_SECRET, PIPELINE_SECRET
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_PAIRING_CODE, TELEGRAM_WEBHOOK_SECRET, PIPELINE_SECRET,
+#   GEMINI_API_KEY (free key: French translation in the PDF reader)
 
-# The bot writes first: 08:30, 13:30 and 20:00 in Africa/Algiers (UTC+1, no DST).
+# One tick every 30 minutes: the worker sends the slots of its SCHEDULE
+# (08:00, 10:00, 13:00, 15:30, 18:00, 20:00 Africa/Algiers, UTC+1 without DST)
+# and the AI-security alerts held during quiet hours.
 [triggers]
-crons = ["30 7 * * *", "30 12 * * *", "0 19 * * *"]
+crons = ["*/30 * * * *"]
 
 # KV namespace for state (chat_id, queued decisions, lesson progress, settings)
 [[kv_namespaces]]

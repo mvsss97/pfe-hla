@@ -1,0 +1,294 @@
+/* Bilingual PDF reader: the page images stay white like paper; the chrome follows the theme. */
+:root {
+  --bg: #e9edf3;
+  --bar: #0f1726;
+  --bar-text: #f3f7ff;
+  --muted: #5b6880;
+  --accent: #1f8fb3;
+  --line: #cfd8e5;
+  --panel: #ffffff;
+  --text: #142039;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b111d;
+    --muted: #98a6bf;
+    --line: #27344c;
+    --panel: #121b2c;
+    --text: #f3f7ff;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem .9rem;
+  padding: calc(.5rem + env(safe-area-inset-top, 0px)) 1rem .5rem;
+  background: var(--bar);
+  color: var(--bar-text);
+  box-shadow: 0 2px 10px rgb(0 0 0 / .25);
+}
+
+.back {
+  color: #7de3ff;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.doc-title {
+  display: grid;
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.doc-title strong,
+.doc-title small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-title small {
+  color: #b9c6dc;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+
+.modes,
+.zoom {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid #3a4b68;
+  border-radius: .6rem;
+}
+
+.modes button,
+.zoom button {
+  min-width: 2.6rem;
+  min-height: 2.2rem;
+  padding: .25rem .6rem;
+  border: 0;
+  border-right: 1px solid #3a4b68;
+  background: transparent;
+  color: var(--bar-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.modes button:last-child,
+.zoom button:last-child {
+  border-right: 0;
+}
+
+.modes button[aria-pressed="true"] {
+  background: #1f8fb3;
+  color: #fff;
+}
+
+.status,
+.notice {
+  margin: .6rem auto;
+  max-width: 60rem;
+  padding: 0 1rem;
+  color: var(--muted);
+  font-size: .9rem;
+}
+
+.notice {
+  padding: .7rem 1rem;
+  border: 1px solid #e0a800;
+  border-radius: .7rem;
+  background: color-mix(in srgb, #ffcc66 18%, var(--panel));
+  color: var(--text);
+}
+
+.picker {
+  max-width: 40rem;
+  margin: 1rem auto;
+  padding: 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--panel);
+}
+
+.picker h1 {
+  margin-top: 0;
+  font-size: 1.3rem;
+}
+
+.picker .row {
+  display: grid;
+  gap: .35rem;
+  margin: 1rem 0;
+}
+
+.picker form.row {
+  grid-template-columns: 1fr auto;
+}
+
+.picker form.row label {
+  grid-column: 1 / -1;
+}
+
+.picker input[type="url"] {
+  min-height: 2.5rem;
+  padding: .4rem .6rem;
+  border: 1px solid var(--line);
+  border-radius: .5rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.picker button {
+  min-height: 2.5rem;
+  padding: 0 1rem;
+  border: 0;
+  border-radius: .5rem;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.small {
+  color: var(--muted);
+  font-size: .85rem;
+}
+
+#pages {
+  display: grid;
+  gap: 1.2rem;
+  justify-items: center;
+  padding: 0 .5rem 4rem;
+}
+
+.page {
+  display: grid;
+  gap: .6rem;
+  justify-items: center;
+}
+
+.page-pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .6rem;
+  justify-content: center;
+}
+
+.sheet {
+  position: relative;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 2px 12px rgb(0 0 0 / .18);
+}
+
+.sheet canvas {
+  display: block;
+}
+
+.sheet .label {
+  position: absolute;
+  top: .3rem;
+  right: .3rem;
+  z-index: 3;
+  padding: .05rem .4rem;
+  border-radius: .4rem;
+  background: rgb(15 23 38 / .72);
+  color: #fff;
+  font-size: .7rem;
+}
+
+/* The FR sheet copies the original page and paints each paragraph in French over it. */
+.overlay {
+  position: absolute;
+  inset: 0;
+}
+
+.block {
+  position: absolute;
+  overflow: hidden;
+  color: #111;
+  font-family: "Latin Modern Roman", "CMU Serif", "Times New Roman", Times, Georgia, serif;
+  line-height: 1.13;
+  text-align: justify;
+  hyphens: auto;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.block.heading {
+  font-weight: 700;
+  text-align: left;
+}
+
+.block.dark {
+  color: #f5f5f5;
+}
+
+.block.show-en {
+  outline: 2px solid rgb(31 143 179 / .65);
+  outline-offset: 1px;
+}
+
+.page-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: .8rem;
+}
+
+.page-status button {
+  margin-left: .4rem;
+  border: 1px solid var(--line);
+  border-radius: .4rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+body.mode-en .sheet.fr,
+body.mode-fr .sheet.en {
+  /* Kept in the layout (offscreen) so French paragraphs can still be measured. */
+  position: absolute;
+  left: -300vw;
+  visibility: hidden;
+}
+
+.foot {
+  position: fixed;
+  right: .8rem;
+  bottom: calc(.8rem + env(safe-area-inset-bottom, 0px));
+  z-index: 15;
+  padding: .35rem .7rem;
+  border-radius: 999px;
+  background: rgb(15 23 38 / .85);
+  color: #fff;
+  font-size: .8rem;
+}

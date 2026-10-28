@@ -30,6 +30,21 @@
       "required": ["wir", "candidats", "filtres", "recherche", "budget_requetes"],
       "additionalProperties": false
     },
+    "grille_hard_label": {
+      "type": "object",
+      "properties": {
+        "initialisation": {"type": "string"},
+        "reduction_espace": {"type": "string"},
+        "optimisation": {"type": "string"},
+        "filtres_avant_requete": {"type": "string"},
+        "importance_mots": {"type": "string"}
+      },
+      "required": [
+        "initialisation", "reduction_espace", "optimisation",
+        "filtres_avant_requete", "importance_mots"
+      ],
+      "additionalProperties": false
+    },
     "evaluation": {
       "type": "object",
       "properties": {
@@ -120,16 +135,18 @@
           "terme": {"type": "string"},
           "traduction_fr": {"type": "string"},
           "definition_en": {"type": "string"},
-          "exemple_en": {"type": "string"}
+          "definition_fr": {"type": "string"},
+          "exemple_en": {"type": "string"},
+          "exemple_fr": {"type": "string"}
         },
-        "required": ["terme", "traduction_fr", "definition_en", "exemple_en"],
+        "required": ["terme", "traduction_fr", "definition_en", "definition_fr", "exemple_en", "exemple_fr"],
         "additionalProperties": false
       }
     }
   },
   "required": [
     "resume_simple", "probleme", "contributions", "methode", "acces_oracle", "composants",
-    "evaluation", "resultats", "points_forts", "faiblesses", "menaces_validite",
+    "grille_hard_label", "evaluation", "resultats", "points_forts", "faiblesses", "menaces_validite",
     "reproductibilite", "limites_auteurs", "qualite", "eligibilite", "pertinence_pfe",
     "pistes_contribution", "phrase_etat_de_lart", "vocabulaire"
   ],

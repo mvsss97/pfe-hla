@@ -15,6 +15,14 @@ Remplis chaque champ en français simple, pour un étudiant débutant :
 - `composants` : comment les mots importants sont choisis (WIR), d'où viennent les substitutions
   (candidats), quels filtres (sens, grammaire, POS…), quelle stratégie de recherche, et le budget de
   requêtes. Écris « non précisé dans le texte » si l'info manque.
+- `grille_hard_label` : lis l'attaque à travers les étapes communes des attaques hard-label
+  récentes — `initialisation` (comment le premier exemple adversarial est obtenu : aléatoire,
+  global, aucun…), `reduction_espace` (réversion des substitutions, réduction de la perturbation),
+  `optimisation` (GA, évolution différentielle, recherche locale, échantillonnage, gradient
+  estimé…), `filtres_avant_requete` (ce qui est écarté sans interroger le modèle : contraintes,
+  déduplication, prédiction de succès…), `importance_mots` (comment l'attaque choisit les mots
+  importants, et si ce choix coûte des requêtes). Pour une attaque qui n'est pas hard-label,
+  explique brièvement l'équivalent ou écris « non applicable ».
 - `evaluation` : datasets, modèles attaqués, métriques, baselines (noms exacts du texte).
 - `resultats` : 3 à 6 résultats chiffrés importants. `valeur` = le nombre tel qu'écrit dans
   l'article (ex. « 88.4% ») ; `citation` = la phrase exacte qui le contient (copiée mot pour mot,
@@ -30,4 +38,5 @@ Remplis chaque champ en français simple, pour un étudiant débutant :
 - `phrase_etat_de_lart` : une phrase prête à citer dans un état de l'art, au format
   « Auteur et al. (année) … ».
 - `vocabulaire` : 5 termes anglais scientifiques importants de l'article, avec traduction française,
-  définition anglaise simple et une phrase d'exemple **copiée de l'article**.
+  définition anglaise simple (`definition_en`) et sa version française (`definition_fr`), une phrase
+  d'exemple **copiée de l'article** (`exemple_en`) et sa traduction française (`exemple_fr`).

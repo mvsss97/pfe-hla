@@ -2208,6 +2208,61 @@ kbd {
 
 @media (min-width: 1260px) {
   .agent-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+}
+
+/* v3 · Encadrant and AI-security news pages */
+.inline-select {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  color: var(--muted);
+  font-size: .8rem;
+}
+
+.inline-select select {
+  min-height: 2rem;
+  border: 1px solid var(--line);
+  border-radius: .6rem;
+  color: var(--text);
+  background: var(--panel-strong);
+  padding: .2rem .5rem;
+}
+
+#supervisor-body td {
+  vertical-align: top;
+}
+
+#supervisor-body .microcopy {
+  display: inline-block;
+  margin-top: .2rem;
+}
+
+#thesis-plan a {
+  color: var(--cyan);
+}
+
+/* v3 · French next to the English */
+.fr-line {
+  color: var(--cyan);
+  font-style: italic;
+}
+
+.paper-card .fr-line {
+  margin: -.3rem 0 .2rem;
+}
+
+.fr-details {
+  margin: .2rem 0 .6rem;
+}
+
+.fr-details summary {
+  color: var(--cyan);
+  cursor: pointer;
+  font-size: .85rem;
+}
+
+.fr-details p {
+  margin: .4rem 0 0;
 }

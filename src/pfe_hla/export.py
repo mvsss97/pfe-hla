@@ -8,12 +8,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pfe_hla.library import paper_key, utc_now
+from pfe_hla.news import recent_news
 from pfe_hla.prisma import compute_prisma_counts
 from pfe_hla.protocol import active_protocol
+from pfe_hla.reading import resolve_pdf_url
+from pfe_hla.supervisor import load_families, supervisor_papers
 
 BOT_QUEUE_LIMIT = 40
 BOT_SHEETS_LIMIT = 15
 BOT_ABSTRACT_CHARS = 600
+BOT_NEWS_LIMIT = 30
+SITE_NEWS_LIMIT = 200
 
 
 def _json_list(raw: str) -> list[str]:
@@ -116,6 +121,22 @@ def _reading_queue(connection: sqlite3.Connection) -> dict[int, dict]:
     }
 
 
+def _paper_tags(connection: sqlite3.Connection) -> dict[int, list[str]]:
+    tags: dict[int, list[str]] = {}
+    for row in connection.execute("SELECT paper_id, tag FROM paper_tags ORDER BY tag"):
+        tags.setdefault(int(row["paper_id"]), []).append(row["tag"])
+    return tags
+
+
+def _translations(connection: sqlite3.Connection) -> dict[int, sqlite3.Row]:
+    return {
+        int(row["paper_id"]): row
+        for row in connection.execute(
+            "SELECT paper_id, title_fr, abstract_fr FROM paper_translations"
+        )
+    }
+
+
 def _sheet_index(connection: sqlite3.Connection) -> dict[int, dict]:
     return {
         int(row["paper_id"]): json.loads(row["checks_json"] or "{}").get("summary", {})
@@ -187,6 +208,8 @@ def build_public_state(connection: sqlite3.Connection) -> dict:
     triage_by_paper = _latest_triage(connection)
     queue_by_paper = _reading_queue(connection)
     sheets_by_paper = _sheet_index(connection)
+    tags_by_paper = _paper_tags(connection)
+    translations = _translations(connection)
     papers = []
     for row in connection.execute(
         """
@@ -194,6 +217,7 @@ def build_public_state(connection: sqlite3.Connection) -> dict:
                papers.title, papers.abstract, papers.authors_json,
                papers.publication_year, papers.venue, papers.url, papers.pdf_url,
                papers.status, papers.exclusion_code, papers.source,
+               papers.arxiv_id, papers.doi,
                EXISTS (
                    SELECT 1
                    FROM paper_hits
@@ -221,13 +245,17 @@ def build_public_state(connection: sqlite3.Connection) -> dict:
         """
     ):
         paper_id = int(row["id"])
+        french = translations.get(paper_id)
         papers.append(
             {
                 "id": row["id"],
                 "key": paper_key(str(row["canonical_key"])),
                 "discoveredAt": row["discovered_at"],
                 "title": row["title"],
+                "titleFr": french["title_fr"] if french else "",
                 "abstract": row["abstract"],
+                "abstractFr": french["abstract_fr"] if french else "",
+                "readerUrl": resolve_pdf_url(row),
                 "authors": _json_list(row["authors_json"]),
                 "year": row["publication_year"],
                 "venue": row["venue"],
@@ -242,12 +270,14 @@ def build_public_state(connection: sqlite3.Connection) -> dict:
                 "triage": triage_by_paper.get(paper_id),
                 "readingQueue": queue_by_paper.get(paper_id),
                 "sheet": sheets_by_paper.get(paper_id),
+                "tags": tags_by_paper.get(paper_id, []),
             }
         )
     vocabulary = []
     for row in connection.execute(
         """
         SELECT vocabulary.id, term, translation_fr, definition_en, synonyms_json, example_en,
+               definition_fr, example_fr,
                repetitions, interval_days, due_at, papers.title AS source_title
         FROM vocabulary LEFT JOIN papers ON papers.id = vocabulary.source_paper_id
         ORDER BY term
@@ -259,8 +289,10 @@ def build_public_state(connection: sqlite3.Connection) -> dict:
                 "term": row["term"],
                 "translation": row["translation_fr"],
                 "definition": row["definition_en"],
+                "definitionFr": row["definition_fr"],
                 "synonyms": _json_list(row["synonyms_json"]),
                 "example": row["example_en"],
+                "exampleFr": row["example_fr"],
                 "repetitions": row["repetitions"],
                 "intervalDays": row["interval_days"],
                 "dueAt": row["due_at"],
@@ -324,6 +356,7 @@ def build_public_state(connection: sqlite3.Connection) -> dict:
         "experiments": experiments,
         "searchRuns": search_runs,
         "evidence": evidence_counts,
+        "supervisor": {"families": load_families(), "papers": supervisor_papers(connection)},
     }
 
 
@@ -382,6 +415,82 @@ def build_sheets_state(connection: sqlite3.Connection) -> dict:
     return {"generatedAt": utc_now(), "sheets": sheets, "synthesis": synthesis}
 
 
+def build_news_state(connection: sqlite3.Connection) -> dict:
+    """AI-security watch for the Actus page."""
+
+    items = recent_news(connection, limit=SITE_NEWS_LIMIT)
+    counts: dict[str, int] = {}
+    for item in items:
+        counts[item["kind"]] = counts.get(item["kind"], 0) + 1
+    return {"generatedAt": utc_now(), "counts": counts, "items": items}
+
+
+def build_reader_index(public_state: dict, sheets_state: dict) -> dict:
+    """Small key → PDF index for the bilingual reader (reader.html?k=…)."""
+
+    with_sheet = {item["key"] for item in sheets_state["sheets"]}
+    return {
+        "generatedAt": public_state["generatedAt"],
+        "papers": {
+            paper["key"]: {
+                "t": paper["title"],
+                "tf": paper["titleFr"],
+                "pdf": paper["readerUrl"] or paper["pdfUrl"],
+                "sheet": paper["key"] in with_sheet,
+            }
+            for paper in public_state["papers"]
+            if paper["readerUrl"] or paper["pdfUrl"]
+        },
+    }
+
+
+def _bot_supervisor(public_state: dict) -> dict:
+    papers = public_state["supervisor"]["papers"]
+    readings = [paper["reading"] for paper in papers]
+    return {
+        "total": len(papers),
+        "sheets": readings.count("sheet"),
+        "queued": readings.count("queued"),
+        "noPdf": readings.count("no_pdf") + readings.count("error"),
+        "items": [
+            {
+                "key": paper["key"],
+                "short": paper["short"],
+                "title": paper["title"][:140],
+                "year": paper["year"],
+                "priority": paper["priority"],
+                "family": paper["family"],
+                "reading": paper["reading"],
+                "url": paper["url"],
+                "pdf": paper["pdf"],
+            }
+            for paper in papers
+            if (paper["priority"] or 9) <= 2
+        ],
+    }
+
+
+def _bot_news(news_state: dict) -> list[dict]:
+    return [
+        {
+            "key": item["key"],
+            "kind": item["kind"],
+            "source": item["source"],
+            "title": item["title"][:200],
+            "titleFr": item["titleFr"][:200],
+            "summary": item["summary"][:320],
+            "fr": item["summaryFr"],
+            "url": item["url"],
+            "severity": item["severity"],
+            "at": item["publishedAt"] or item["collectedAt"],
+            "collectedAt": item["collectedAt"],
+            "stars": item["extra"].get("stars"),
+            "cvss": item["extra"].get("cvss"),
+        }
+        for item in news_state["items"][:BOT_NEWS_LIMIT]
+    ]
+
+
 def _bot_stage(paper: dict, human_screened: set[int]) -> str | None:
     """Which Telegram buttons a paper needs, or None when nothing is pending."""
 
@@ -406,6 +515,7 @@ def build_bot_state(
     sheets_state: dict,
     *,
     site_url: str,
+    news_state: dict | None = None,
 ) -> dict:
     """Small snapshot for the Cloudflare worker (free tier allows ~10 ms CPU per call)."""
 
@@ -421,10 +531,13 @@ def build_bot_state(
             {
                 "key": paper["key"],
                 "title": paper["title"],
+                "titleFr": paper["titleFr"],
                 "year": paper["year"],
                 "venue": paper["venue"] or paper["source"],
                 "abstract": (paper["abstract"] or "")[:BOT_ABSTRACT_CHARS],
+                "abstractFr": (paper["abstractFr"] or "")[:BOT_ABSTRACT_CHARS],
                 "url": paper["url"] or paper["pdfUrl"],
+                "pdf": paper["readerUrl"],
                 "stage": stage,
                 "later": bool(triage and triage["decision"] == "later"),
                 "hasSheet": paper.get("sheet") is not None,
@@ -455,6 +568,7 @@ def build_bot_state(
             "key": item["key"],
             "title": item["title"],
             "year": item["year"],
+            "pdf": item["pdfUrl"],
             "summary": str(item["sheet"].get("resume_simple", ""))[:500],
             "relevance": (item["sheet"].get("pertinence_pfe") or {}).get("score"),
             "eligibility": (item["sheet"].get("eligibilite") or {}).get("suggestion"),
@@ -490,12 +604,16 @@ def build_bot_state(
         "library": {"total": len(public_state["papers"]), "pending": len(queue)},
         "queue": queue[:BOT_QUEUE_LIMIT],
         "sheets": sheets,
+        "supervisor": _bot_supervisor(public_state),
+        "securityNews": _bot_news(news_state or build_news_state(connection)),
         "vocabulary": [
             {
                 "term": word["term"],
                 "fr": word["translation"],
                 "def": word["definition"],
+                "defFr": word["definitionFr"],
                 "ex": word["example"],
+                "exFr": word["exampleFr"],
                 "syn": word["synonyms"][:3],
                 "due": word["dueAt"],
                 "reps": word["repetitions"],
@@ -521,16 +639,23 @@ def export_public_state(
     *,
     site_url: str = "https://pfe-hla.pages.dev",
 ) -> Path:
-    """Write state.json, plus sheets.json and bot.json next to it."""
+    """Write state.json, plus sheets.json, news.json, reader.json and bot.json next to it."""
 
     path = Path(output_path)
     public_state = build_public_state(connection)
     sheets_state = build_sheets_state(connection)
+    news_state = build_news_state(connection)
     _write_json(path, public_state)
     _write_json(path.with_name("sheets.json"), sheets_state)
+    _write_json(path.with_name("news.json"), news_state)
+    _write_json(
+        path.with_name("reader.json"), build_reader_index(public_state, sheets_state), indent=None
+    )
     _write_json(
         path.with_name("bot.json"),
-        build_bot_state(connection, public_state, sheets_state, site_url=site_url),
+        build_bot_state(
+            connection, public_state, sheets_state, site_url=site_url, news_state=news_state
+        ),
         indent=None,
     )
     return path

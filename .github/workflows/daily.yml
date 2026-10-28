@@ -1,8 +1,10 @@
 name: daily research companion
 
-# The research agents live here: twice a day GitHub wakes up, applies the
-# Telegram decisions, collects papers, lets the AI agents (Gemini, free key)
-# pre-screen / read / compare them, publishes the site and tells the bot.
+# The research agents live here. Twice a day a full run applies the Telegram
+# decisions, imports the supervisor's list, collects papers, lets the AI agents
+# (Gemini, free key) pre-screen / read / compare / translate them, publishes the
+# site and tells the bot. Six light runs a day only watch AI-security news,
+# translate, apply Telegram decisions and push alerts.
 
 on:
   workflow_dispatch:
@@ -13,6 +15,8 @@ on:
     # top-of-the-hour congestion that delayed the old 18:00 run by hours.
     - cron: "17 5 * * *"
     - cron: "47 14 * * *"
+    # Light runs (~02:37, 09:37, 12:37, 18:37, 21:37, 00:37 local): news, alerts, translations.
+    - cron: "37 1,8,11,17,20,23 * * *"
 
 permissions:
   contents: write # encrypted database backup branch
@@ -53,9 +57,15 @@ jobs:
 
       - run: python -m pip install -e ".[review]"
 
-      - name: Mark the run start
+      - name: Mark the run start and its kind
         id: start
-        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "at=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "37 1,8,11,17,20,23 * * *" ]; then
+            echo "full=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "full=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Restore the research database
         id: dbcache
@@ -95,17 +105,31 @@ jobs:
         run: python -m pfe_hla sync-decisions
 
       - name: Freeze the review protocol v1 (provisional until the supervisor validates it)
+        if: steps.start.outputs.full == 'true'
         continue-on-error: true
         run: |
           python -m pfe_hla protocol-freeze v1 --note "Provisoire, à valider par l'encadrant"
 
       - name: Formal PRISMA search (each protocol query runs once)
+        if: steps.start.outputs.full == 'true'
         continue-on-error: true
         run: python -m pfe_hla collect --run-kind review --limit 100 --max-records 100
 
       - name: Daily watch (newest papers)
+        if: steps.start.outputs.full == 'true'
         continue-on-error: true
         run: python -m pfe_hla collect --limit 25 --run-kind watch
+
+      - name: Supervisor's reading list (bibliographic data only)
+        if: steps.start.outputs.full == 'true'
+        continue-on-error: true
+        run: python -m pfe_hla supervisor-import
+
+      - name: AI-security watch (flaws, repositories, incidents, press, arXiv)
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # higher GitHub search limits
+        run: python -m pfe_hla news-collect
 
       - name: Deduplicate
         run: python -m pfe_hla dedupe --apply || true
@@ -114,14 +138,22 @@ jobs:
         run: python -m pfe_hla carry-triage
 
       - name: Fetch PDFs for the reading queue
-        run: python -m pfe_hla fetch-queue --limit 3 --auto-queue 5
+        if: steps.start.outputs.full == 'true'
+        continue-on-error: true
+        run: python -m pfe_hla fetch-queue --limit 4 --auto-queue 5
 
-      - name: AI agents — sort, read, compare
+      - name: AI agents — sort, read, compare, summarise news, translate
         # Not on every code push: the free Gemini quota is kept for the schedule.
-        if: github.event_name != 'push'
+        if: github.event_name != 'push' && steps.start.outputs.full == 'true'
         timeout-minutes: 45
         continue-on-error: true
-        run: python -m pfe_hla agents --max-screen 50 --max-read 3
+        run: python -m pfe_hla agents --max-screen 50 --max-read 4
+
+      - name: AI agents — light run (news summaries and translations only)
+        if: steps.start.outputs.full != 'true'
+        timeout-minutes: 15
+        continue-on-error: true
+        run: python -m pfe_hla agents --max-screen 0 --max-read 0 --no-synthesis --max-news 30 --max-translate 36
 
       - name: Export the dashboard data
         run: python -m pfe_hla export
@@ -171,7 +203,7 @@ jobs:
           command: pages deploy site --project-name=pfe-hla --branch=master
 
       - name: Tell the Telegram bot what the agents did
-        run: python -m pfe_hla notify --since "${{ steps.start.outputs.at }}"
+        run: python -m pfe_hla notify --since "${{ steps.start.outputs.at }}" ${{ steps.start.outputs.full != 'true' && '--light' || '' }}
 
       - name: Keep the schedule alive
         continue-on-error: true

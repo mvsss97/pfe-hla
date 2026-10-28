@@ -6,12 +6,14 @@
     ["bibliotheque", "Bibliothèque"],
     ["prisma", "PRISMA"],
     ["agents", "Agents IA"],
+    ["encadrant", "Encadrant"],
     ["fiches", "Fiches de lecture"],
     ["comparatif", "Comparatif"],
     ["taxonomie", "Taxonomie"],
     ["experiences", "Expériences WIR"],
     ["redaction", "Rédaction"],
     ["english", "English Lab"],
+    ["actus", "Actus sécu IA"],
     ["guide", "Guide"],
   ];
 
@@ -20,6 +22,7 @@
     savedPapers: "hardlabel.savedPapers",
     vocabulary: "hardlabel.vocabulary.progress",
     redaction: "hardlabel.redaction.checklist",
+    thesis: "hardlabel.these.done",
   };
 
   const DEFAULT_PRISMA = Object.freeze({
@@ -320,6 +323,10 @@
     return node;
   }
 
+  function readerHref(key) {
+    return `reader.html?k=${encodeURIComponent(key)}`;
+  }
+
   function safeWebUrl(value) {
     try {
       const url = new URL(String(value));
@@ -414,7 +421,15 @@
         `${corpusLabel} · ${statusLabel}`,
       );
       top.append(badge, element("span", "", `${venue} · ${year}`));
-      card.append(top, element("h2", "", title), element("p", "authors", authors), element("p", "", summary));
+      card.append(top, element("h2", "", title));
+      if (paper.titleFr) card.append(element("p", "fr-line", `🇫🇷 ${paper.titleFr}`));
+      card.append(element("p", "authors", authors), element("p", "", summary));
+      if (paper.abstractFr) {
+        const french = element("details", "fr-details");
+        french.append(element("summary", "", "🇫🇷 Résumé en français"), element("p", "", paper.abstractFr));
+        card.append(french);
+      }
+      card.dataset.search += ` ${paper.titleFr || ""} ${paper.abstractFr || ""}`;
 
       const tagRow = element("div", "tag-row");
       const scientificTags = analysis
@@ -431,8 +446,10 @@
         const human = { include: "toi : gardé", exclude: `toi : exclu ${paper.triage.code || ""}`, uncertain: "toi : incertain", later: "toi : plus tard" }[paper.triage.decision];
         if (human) tagRow.append(element("span", "human-tag", human));
       }
+      const supervisorPick = Array.isArray(paper.tags) && paper.tags.includes("encadrant");
+      if (supervisorPick) tagRow.append(element("span", "human-tag", "🎓 encadrant"));
       card.append(tagRow);
-      card.dataset.search += ` ${paper.ai?.rationale || ""}`;
+      card.dataset.search += ` ${paper.ai?.rationale || ""}${supervisorPick ? " encadrant" : ""}`;
 
       const actions = element("div", "card-actions");
       const sourceUrl = safeWebUrl(paper.url || paper.source_url || paper.doi_url || paper.pdfUrl);
@@ -449,6 +466,11 @@
         const sheetLink = element("a", "", "Fiche IA");
         sheetLink.href = `#fiches/${encodeURIComponent(paper.key)}`;
         actions.append(sheetLink);
+      }
+      if (paper.readerUrl && paper.key) {
+        const readerLink = element("a", "", "📖 Lire (FR/EN)");
+        readerLink.href = readerHref(paper.key);
+        actions.append(readerLink);
       }
       const save = element("button", "save-paper", "＋ À lire");
       save.type = "button";
@@ -605,6 +627,9 @@
         fr: String(item.fr || item.translation || item.definition_fr || item.definition || "Traduction à compléter"),
         synonyms: Array.isArray(item.synonyms) ? item.synonyms.map(String) : item.synonyms ? [String(item.synonyms)] : [],
         example: String(item.example || item.sentence || "Exemple à compléter dans le carnet."),
+        definition: String(item.definition || ""),
+        definitionFr: String(item.definitionFr || ""),
+        exampleFr: String(item.exampleFr || ""),
         snapshotProgress: {
           repetitions: safeInteger(item.repetitions),
           interval: safeInteger(item.intervalDays ?? item.interval_days),
@@ -718,6 +743,17 @@
     $("#word-fr").textContent = word.fr;
     $("#word-synonyms").textContent = word.synonyms.length ? word.synonyms.join(" · ") : "—";
     $("#word-example").textContent = word.example;
+    for (const [id, value] of [["definition", word.definition], ["definition-fr", word.definitionFr]]) {
+      const target = $(`#word-${id}`);
+      if (target) target.textContent = value || "";
+      const row = $(`#word-${id}-row`);
+      if (row) row.hidden = !value;
+    }
+    const exampleFr = $("#word-example-fr");
+    if (exampleFr) {
+      exampleFr.textContent = word.exampleFr ? `🇫🇷 « ${word.exampleFr} »` : "";
+      exampleFr.hidden = !word.exampleFr;
+    }
   }
 
   function revealVocabularyAnswer() {
@@ -973,6 +1009,10 @@
       }
       if (snapshot.experiments) renderCompletedRuns(snapshot.experiments);
       if (snapshot.agents) renderAgents(snapshot.agents);
+      if (snapshot.supervisor) {
+        supervisorState = snapshot.supervisor;
+        renderSupervisor();
+      }
       if (snapshot.protocol && typeof snapshot.protocol === "object") {
         const protocol = snapshot.protocol;
         const status = protocol.status === "validated" ? "validé par l’encadrant" : "provisoire, à faire valider par l’encadrant";
@@ -998,11 +1038,13 @@
     "not-applicable": "non applicable",
     unknown: "à vérifier",
   };
-  const TASK_LABELS = { screening: "Trieur", reading: "Lecteur", synthesis: "Synthèse", pipeline: "Pipeline" };
+  const TASK_LABELS = { screening: "Trieur", reading: "Lecteur", synthesis: "Synthèse", news: "Veilleur", translation: "Traducteur", pipeline: "Pipeline" };
   const ELIGIBILITY_LABELS = { include: "garder", exclude: "exclure", uncertain: "incertain" };
 
   let sheetsState = { sheets: [], synthesis: null };
   let learningState = null;
+  let supervisorState = null;
+  let newsState = [];
 
   function formatDateTime(value) {
     const date = value ? new Date(value) : null;
@@ -1039,7 +1081,7 @@
     status.textContent = waiting ? "En attente de la clé IA" : agents.lastSuccessAt ? `Actifs · ${formatDateTime(agents.lastSuccessAt)}` : "Aucun passage";
     status.className = `status large ${waiting ? "amber" : agents.lastSuccessAt ? "cyan" : "neutral"}`;
     const totals = agents.totals || {};
-    for (const task of ["screening", "reading", "synthesis"]) {
+    for (const task of ["screening", "reading", "synthesis", "news", "translation"]) {
       const node = $(`#agent-${task}`);
       if (!node) continue;
       const total = totals[task];
@@ -1121,6 +1163,11 @@
       const open = element("a", "", "Lire la fiche");
       open.href = `#fiches/${encodeURIComponent(item.key)}`;
       actions.append(open);
+      if (item.pdfUrl) {
+        const reader = element("a", "", "📖 Article FR/EN");
+        reader.href = readerHref(item.key);
+        actions.append(reader);
+      }
       const source = safeWebUrl(item.url || item.pdfUrl);
       if (source) {
         const link = element("a", "", "Source");
@@ -1178,6 +1225,11 @@
     panel.append(warning);
 
     const links = element("div", "card-actions");
+    if (item.pdfUrl) {
+      const reader = element("a", "", "📖 Lire l’article traduit (même mise en page)");
+      reader.href = readerHref(item.key);
+      links.append(reader);
+    }
     for (const [label, url] of [["Source", item.url], ["PDF", item.pdfUrl]]) {
       const safe = safeWebUrl(url);
       if (!safe) continue;
@@ -1218,6 +1270,23 @@
       dl.append(row);
     }
     panel.append(section("Composants de l’attaque", dl));
+
+    const grid = sheet.grille_hard_label;
+    if (grid && typeof grid === "object") {
+      const gridList = element("dl", "kv-grid");
+      for (const [label, value] of [
+        ["Initialisation", grid.initialisation],
+        ["Réduction de l’espace de recherche", grid.reduction_espace],
+        ["Optimisation", grid.optimisation],
+        ["Filtres avant requête", grid.filtres_avant_requete],
+        ["Importance des mots", grid.importance_mots],
+      ]) {
+        const row = element("div");
+        row.append(element("dt", "", label), element("dd", "", value || "—"));
+        gridList.append(row);
+      }
+      panel.append(section("Grille hard-label (étapes communes des attaques récentes)", gridList));
+    }
 
     const evaluation = sheet.evaluation || {};
     const evalGrid = element("dl", "kv-grid");
@@ -1316,9 +1385,11 @@
     const vocab = element("ul", "plain-list");
     (sheet.vocabulaire || []).forEach((word, index) => {
       const line = element("li");
-      line.append(element("b", "", word.terme || ""), document.createTextNode(` = ${word.traduction_fr || ""} — ${word.definition_en || ""} `));
+      line.append(element("b", "", word.terme || ""), document.createTextNode(` = ${word.traduction_fr || ""} — 🇬🇧 ${word.definition_en || ""} `));
+      if (word.definition_fr) line.append(element("span", "fr-line", `🇫🇷 ${word.definition_fr} `));
       if (word.exemple_en) line.append(element("i", "", `« ${word.exemple_en} » `));
       line.append(checkBadge(checkFor(`vocabulaire[${index}]`)));
+      if (word.exemple_fr) line.append(element("span", "fr-line", ` 🇫🇷 « ${word.exemple_fr} »`));
       vocab.append(line);
     });
     panel.append(section("Vocabulaire anglais (ajouté à l’English Lab)", vocab));
@@ -1469,6 +1540,191 @@
     });
   }
 
+  const READING_LABELS = {
+    sheet: ["✅ fiche écrite", "cyan"],
+    queued: ["⏳ en lecture", "amber"],
+    no_pdf: ["📕 pas de PDF libre", "danger"],
+    error: ["⚠️ à réessayer", "danger"],
+    not_queued: ["▫️ non demandée", "neutral"],
+  };
+
+  function renderSupervisor() {
+    const body = $("#supervisor-body");
+    if (!body || !supervisorState) return;
+    const papers = Array.isArray(supervisorState.papers) ? supervisorState.papers : [];
+    const families = supervisorState.families && typeof supervisorState.families === "object" ? supervisorState.families : {};
+    const select = $("#supervisor-family");
+    if (select && select.options.length <= 1) {
+      Object.entries(families).forEach(([value, label]) => {
+        if (!papers.some((paper) => paper.family === value)) return;
+        const option = element("option", "", label);
+        option.value = value;
+        select.append(option);
+      });
+    }
+    const family = select?.value || "all";
+    const count = (reading) => papers.filter((paper) => paper.reading === reading).length;
+    $("#supervisor-count").textContent = String(papers.length);
+    $("#supervisor-sheets").textContent = String(count("sheet"));
+    $("#supervisor-queued").textContent = String(count("queued"));
+    $("#supervisor-nopdf").textContent = String(count("no_pdf") + count("error"));
+    body.replaceChildren();
+    const visible = papers.filter((paper) => family === "all" || paper.family === family);
+    if (!visible.length) {
+      const row = element("tr");
+      const cell = element("td", "", "La liste sera importée au prochain passage des agents.");
+      cell.colSpan = 6;
+      row.append(cell);
+      body.append(row);
+    }
+    visible.forEach((paper) => {
+      const row = element("tr");
+      const priority = element("td");
+      priority.append(element("span", `status ${paper.priority === 1 ? "amber" : "neutral"}`, `P${paper.priority ?? "?"}`));
+      const title = element("td");
+      title.append(element("b", "", paper.short || ""), element("br"), element("span", "microcopy", `${paper.title || ""} · ${paper.venue || "?"} ${paper.year || ""}`));
+      if (paper.titleFr) title.append(element("br"), element("span", "fr-line", `🇫🇷 ${paper.titleFr}`));
+      const [label, kind] = READING_LABELS[paper.reading] || [paper.reading || "?", "neutral"];
+      const reading = element("td");
+      const badge = element("span", `status ${kind}`, label);
+      if (paper.readingError) badge.title = paper.readingError;
+      reading.append(badge);
+      const links = element("td");
+      if (paper.pdf) {
+        const readerLink = element("a", "", "📖 Lire");
+        readerLink.href = readerHref(paper.key);
+        links.append(readerLink, document.createTextNode(" "));
+      }
+      if (paper.reading === "sheet") {
+        const sheetLink = element("a", "", "Fiche");
+        sheetLink.href = `#fiches/${encodeURIComponent(paper.key)}`;
+        links.append(sheetLink, document.createTextNode(" "));
+      }
+      const source = safeWebUrl(paper.url);
+      if (source) {
+        const sourceLink = element("a", "", "Source");
+        sourceLink.href = source;
+        sourceLink.target = "_blank";
+        sourceLink.rel = "noopener noreferrer";
+        links.append(sourceLink);
+      }
+      row.append(priority, title, element("td", "", families[paper.family] || paper.family || ""), element("td", "", paper.role || ""), reading, links);
+      body.append(row);
+    });
+  }
+
+  function renderThesisPlan() {
+    const list = $("#thesis-plan");
+    const plan = Array.isArray(learningState?.supervisor?.thesisPlan) ? learningState.supervisor.thesisPlan : [];
+    if (!list || !plan.length) return;
+    const done = readJSON(STORAGE.thesis, {});
+    const progress = () => {
+      const saved = readJSON(STORAGE.thesis, {});
+      $("#thesis-progress").textContent = `${plan.filter((step) => saved[step.id]).length} / ${plan.length}`;
+    };
+    list.replaceChildren();
+    plan.forEach((step) => {
+      const line = element("li");
+      const label = element("label", "check");
+      const box = element("input");
+      box.type = "checkbox";
+      box.checked = Boolean(done[step.id]);
+      box.addEventListener("change", () => {
+        const saved = readJSON(STORAGE.thesis, {});
+        if (box.checked) saved[step.id] = true;
+        else delete saved[step.id];
+        writeJSON(STORAGE.thesis, saved);
+        progress();
+      });
+      const text = element("span");
+      text.append(element("b", "", step.title || ""), document.createTextNode(` (${step.pages || ""}) — ${step.goal || ""} `));
+      if (step.lesson) {
+        const lesson = element("a", "", "leçon");
+        lesson.href = `learning.html#${encodeURIComponent(step.lesson)}`;
+        text.append(lesson);
+      }
+      label.append(box, text);
+      line.append(label);
+      list.append(line);
+    });
+    progress();
+    const questions = $("#supervisor-questions");
+    const items = Array.isArray(learningState?.supervisor?.questions) ? learningState.supervisor.questions : [];
+    if (questions && items.length) {
+      questions.replaceChildren(...items.map((question) => element("li", "", question)));
+    }
+  }
+
+  const NEWS_KINDS = { vulnerability: "🔓 Faille", repo: "🧪 Dépôt", incident: "⚠️ Incident IA", article: "📰 Presse", paper: "📄 Recherche" };
+  const NEWS_SOURCES = {
+    github: "GitHub", gitlab: "GitLab", ghsa: "GitHub Advisory", nvd: "NVD (NIST)", kev: "CISA KEV (exploitée)",
+    thehackernews: "The Hacker News", bleepingcomputer: "BleepingComputer", securityweek: "SecurityWeek",
+    aiid: "AI Incident Database", arxiv: "arXiv cs.CR",
+  };
+  const SEVERITY_LABELS = { alert: ["🚨 Alerte", "danger"], notable: ["🔸 Important", "amber"], info: ["▫️ Info", "neutral"] };
+
+  function renderNews() {
+    const grid = $("#news-grid");
+    if (!grid) return;
+    const query = normalizeText($("#news-search")?.value);
+    const kind = $("#news-kind")?.value || "all";
+    const severity = $("#news-severity")?.value || "all";
+    grid.replaceChildren();
+    let visible = 0;
+    newsState.forEach((item) => {
+      if (kind !== "all" && item.kind !== kind) return;
+      if (severity === "alert" && item.severity !== "alert") return;
+      if (severity === "notable" && item.severity === "info") return;
+      const tags = Array.isArray(item.tags) ? item.tags : [];
+      if (query && !normalizeText(`${item.title} ${item.titleFr || ""} ${item.summary} ${item.source} ${tags.join(" ")}`).includes(query)) return;
+      visible += 1;
+      const [severityLabel, severityKind] = SEVERITY_LABELS[item.severity] || SEVERITY_LABELS.info;
+      const card = element("article", `paper-card${item.severity === "alert" ? " priority" : ""}`);
+      const top = element("div", "paper-top");
+      const date = item.publishedAt || item.collectedAt;
+      top.append(element("span", `status ${severityKind}`, severityLabel), element("span", "", `${NEWS_KINDS[item.kind] || item.kind} · ${NEWS_SOURCES[item.source] || item.source} · ${date ? formatDateTime(date) : "date ?"}`));
+      const tagRow = element("div", "tag-row");
+      const extra = item.extra && typeof item.extra === "object" ? item.extra : {};
+      if (extra.stars) tagRow.append(element("span", "", `⭐ ${extra.stars}`));
+      if (extra.cvss) tagRow.append(element("span", "", `CVSS ${extra.cvss}`));
+      tags.slice(0, 5).forEach((tag) => tagRow.append(element("span", "", tag)));
+      if (!item.summaryFr) tagRow.append(element("span", "", "résumé en anglais"));
+      const actions = element("div", "card-actions");
+      const url = safeWebUrl(item.url);
+      if (url) {
+        const open = element("a", "", "Lire la source");
+        open.href = url;
+        open.target = "_blank";
+        open.rel = "noopener noreferrer";
+        actions.append(open);
+      }
+      card.append(top, element("h2", "", item.title || ""));
+      if (item.titleFr) card.append(element("p", "fr-line", `🇫🇷 ${item.titleFr}`));
+      card.append(element("p", "", `${item.summaryFr ? "🇫🇷 " : ""}${String(item.summary || "").slice(0, 600)}`));
+      if (item.summaryFr && item.summaryEn) {
+        const english = element("details", "fr-details");
+        english.append(element("summary", "", "🇬🇧 Texte original"), element("p", "", String(item.summaryEn).slice(0, 700)));
+        card.append(english);
+      }
+      card.append(tagRow, actions);
+      grid.append(card);
+    });
+    $("#news-count").textContent = String(newsState.length);
+    $("#news-empty").hidden = visible > 0;
+  }
+
+  async function loadNewsState() {
+    try {
+      const response = await fetch("data/news.json", { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      newsState = Array.isArray(data?.items) ? data.items : [];
+    } catch (_error) {
+      newsState = [];
+    }
+    renderNews();
+  }
+
   async function loadSheetsState() {
     try {
       const response = await fetch("data/sheets.json", { cache: "no-store" });
@@ -1498,6 +1754,7 @@
       return;
     }
     renderRedaction();
+    renderThesisPlan();
   }
 
   function initializeResearchViews() {
@@ -1505,6 +1762,11 @@
       $(selector)?.addEventListener("input", renderSheetsGrid);
       $(selector)?.addEventListener("change", renderSheetsGrid);
     });
+    ["#news-search", "#news-kind", "#news-severity"].forEach((selector) => {
+      $(selector)?.addEventListener("input", renderNews);
+      $(selector)?.addEventListener("change", renderNews);
+    });
+    $("#supervisor-family")?.addEventListener("change", renderSupervisor);
   }
 
   function researchSnapshot() {
@@ -1599,4 +1861,5 @@
   void loadBackendState();
   void loadSheetsState();
   void loadLearning();
+  void loadNewsState();
 })();
