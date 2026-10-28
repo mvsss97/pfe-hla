@@ -39,7 +39,15 @@ Le script copie `GEMINI_API_KEY` de `.env` vers les secrets GitHub **et vers le 
 
 ### Lecteur PDF bilingue (`site/reader.html`)
 
-PDF.js (Mozilla, Apache-2.0, dans `site/vendor/pdfjs`) affiche la page telle quelle ; le texte de chaque paragraphe est extrait avec sa position (`site/reader-layout.js`), traduit par le worker (`/reader/translate`, Gemini gratuit, cache KV) et repeint en français **au même endroit** sur une copie de la page : colonnes, figures et formules ne bougent pas. Modes 🇬🇧 / 🇫🇷 / côte à côte ; toucher un paragraphe montre l'anglais. Seul le compte associé au bot peut l'utiliser (données de lancement de la mini-app Telegram, ou jeton signé envoyé par `/lecteur`). Le texte envoyé à Gemini (offre gratuite) peut être utilisé par Google : ne pas y ouvrir de document confidentiel.
+PDF.js (Mozilla, Apache-2.0, dans `site/vendor/pdfjs`) affiche la page telle quelle ; le texte de chaque paragraphe est extrait avec sa position (`site/reader-layout.js`) et repeint en français **au même endroit** sur une copie de la page : colonnes, figures et formules ne bougent pas. Modes 🇬🇧 / 🇫🇷 / côte à côte ; toucher un paragraphe montre l'anglais.
+
+Les pages traduites sont gardées dans le cache du bot (KV). Rien à taper :
+
+- **les agents traduisent à l'avance** (`scripts/pretranslate.mjs`, à chaque passage) les articles que tu as ouverts, puis la liste de l'encadrant, puis les articles qui ont une fiche — même découpage que le lecteur, donc même cache ;
+- un article pas encore traduit est **programmé** automatiquement pour le passage suivant (≈ 3 h) ;
+- **traduction instantanée** de n'importe quel PDF (fichier local compris) : double-clic une seule fois sur `ACTIVER-LECTEUR.bat` (donne au bot la clé Gemini de `.env`).
+
+Les PDF de la bibliothèque et des sites en accès ouvert (arXiv, ACL, OpenReview…) s'ouvrent pour tout le monde ; un autre lien demande le compte associé au bot (mini-app Telegram, ou lien de `/lecteur`). Le texte envoyé à Gemini (offre gratuite) peut être utilisé par Google : ne pas y ouvrir de document confidentiel.
 
 ### Documents privés de l'encadrant
 

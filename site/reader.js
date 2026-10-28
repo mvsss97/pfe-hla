@@ -1,11 +1,12 @@
 // Bilingual PDF reader.
 //
 // The page is drawn by PDF.js exactly as published. For the French view, the
-// text of each paragraph is extracted with its position, translated by the
-// Telegram worker (Gemini free key, cached), and painted over the same spot of
-// a copy of the page: columns, figures and formulas keep their place.
-// Only the paired account can use the worker: inside Telegram the mini-app
-// launch data proves it, in a browser a token sent by the bot's /lecteur does.
+// text of each paragraph is extracted with its position, translated (pages
+// cached by the Telegram worker: translated ahead of time by the pipeline, or
+// on demand when the worker has its Gemini key) and painted over the same
+// spot of a copy of the page: columns, figures and formulas keep their place.
+// Library PDFs open for everyone; other links need the paired account
+// (Telegram mini-app launch data, or a token sent by the bot's /lecteur).
 
 import { chunks, extractBlocks, markReferences } from "./reader-layout.js";
 import * as pdfjsLib from "./vendor/pdfjs/pdf.min.js";
@@ -33,6 +34,8 @@ const state = {
   scale: 1,
   entries: [],
   active: 0,
+  instant: false,
+  doc: {},
   references: { inReferences: false },
 };
 
@@ -115,10 +118,9 @@ function launchAuth() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(`${API}${path}`, {
-    ...options,
-    headers: { ...(options.headers || {}), Authorization: state.auth },
-  });
+  const headers = { ...(options.headers || {}) };
+  if (state.auth) headers.Authorization = state.auth;
+  const response = await fetch(`${API}${path}`, { ...options, headers });
   if (!response.ok) {
     const info = await response.json().catch(() => ({}));
     throw new ReaderError(info.error || `HTTP ${response.status}`, response.status);
@@ -126,27 +128,19 @@ async function api(path, options = {}) {
   return response;
 }
 
-const ACCESS_HELP =
-  "Lecteur non activé ici. Ouvre-le depuis un bouton « 📖 Lire » du bot Telegram, ou envoie /lecteur au bot puis touche « 💻 Activer sur ce navigateur ».";
+const OTHER_LINKS_HELP =
+  "Ce lien n'est pas dans ta bibliothèque. Pour l'ouvrir ici, passe par un bouton « 📖 Lire » du bot, ou envoie /lecteur au bot puis touche « 💻 Activer sur ce navigateur ».";
+const SCHEDULED_HELP =
+  "Les pages déjà traduites par les agents s'affichent en français. Les autres sont programmées : les agents les traduisent automatiquement à leur prochain passage (environ toutes les 3 h), sans rien à faire de ta part.";
 
 async function checkAccess() {
-  if (!state.auth) {
-    showNotice(ACCESS_HELP);
-    return false;
-  }
   try {
     const status = await (await api("/reader/status")).json();
-    if (!status.translate) {
-      showNotice("La traduction attend la clé Gemini dans le bot : sur ton PC, lance une fois scripts\\setup-secrets.ps1. L'article reste lisible en anglais.");
-    }
-    state.canTranslate = Boolean(status.translate);
+    state.instant = Boolean(status.translate);
+    state.canTranslate = true;
     return true;
   } catch (error) {
-    if (error.status === 401) {
-      showNotice(state.auth.startsWith("tma ") ? "Accès refusé : rouvre le lecteur depuis un bouton du bot." : ACCESS_HELP);
-    } else {
-      showNotice(`Le service de traduction ne répond pas (${error.message}). Réessaie plus tard.`);
-    }
+    showNotice(`Le service de traduction ne répond pas (${error.message}). L'article reste lisible en anglais ; réessaie plus tard.`);
     return false;
   }
 }
@@ -187,9 +181,11 @@ async function translateTexts(texts) {
         await api("/reader/translate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ texts: part }),
+          body: JSON.stringify({ texts: part, doc: state.doc }),
         })
       ).json();
+      // 202: not translated yet, the paper is queued for the agents' next run.
+      if (!result.ok) throw new ReaderError(result.queued ? "queued" : result.error || "no-url", 202);
       french = result.fr;
       cacheWrite(hash, french);
     }
@@ -224,6 +220,8 @@ function setPageStatus(entry) {
     running: "🇫🇷 traduction en cours…",
     done: entry.fromCache ? "🇫🇷 traduite (déjà en mémoire)" : "🇫🇷 traduite",
     empty: "rien à traduire (figures, formules ou références)",
+    queued: "⏳ traduction programmée : les agents la font au prochain passage (≈ 3 h)",
+    local: "🇬🇧 original (un fichier de ton appareil n'est traduit qu'en traduction instantanée)",
   };
   if (entry.translation === "error") {
     status.textContent = `${prefix}⚠️ traduction impossible (${entry.error})`;
@@ -247,7 +245,11 @@ function updateFoot() {
     return;
   }
   const done = state.entries.filter((entry) => ["done", "empty"].includes(entry.translation)).length;
-  $("#foot-text").textContent = done === total ? `🇫🇷 ${total} pages traduites` : `🇫🇷 traduction : ${done}/${total} pages`;
+  const queued = state.entries.filter((entry) => entry.translation === "queued").length;
+  $("#foot-text").textContent =
+    done === total
+      ? `🇫🇷 ${total} pages traduites`
+      : `🇫🇷 ${done}/${total} pages traduites${queued ? ` · ${queued} programmée(s)` : ""}`;
   $("#foot").hidden = false;
 }
 
@@ -432,14 +434,16 @@ async function translateEntry(entry) {
       entry.fromCache = fromCache;
       entry.translation = "done";
     } catch (error) {
-      entry.translation = "error";
-      entry.error = error.message;
-      if (error.status === 401) {
-        state.canTranslate = false;
-        showNotice(ACCESS_HELP);
-      } else if (error.status === 503) {
-        state.canTranslate = false;
-        showNotice("La traduction attend la clé Gemini dans le bot : sur ton PC, lance une fois scripts\\setup-secrets.ps1.");
+      if (error.status === 202) {
+        entry.translation = state.doc.url ? "queued" : "local";
+        showNotice(
+          state.doc.url
+            ? SCHEDULED_HELP
+            : "Un fichier de ton appareil ne peut pas être traduit à l'avance par les agents : il faut la traduction instantanée (sur ton PC, double-clic sur ACTIVER-LECTEUR.bat, une seule fois). En attendant, ouvre plutôt l'article depuis la bibliothèque ou un lien.",
+        );
+      } else {
+        entry.translation = "error";
+        entry.error = error.message;
       }
     }
   }
@@ -535,17 +539,14 @@ async function paperFromIndex(key) {
 }
 
 async function openUrl(url, meta) {
-  if (!state.auth) {
-    $("#picker").hidden = false;
-    setStatus("Ouvre un PDF de ton appareil, ou active le lecteur pour les liens.");
-    return;
-  }
+  state.doc = { url, key: meta.key || "", title: meta.title || "" };
   setStatus("Téléchargement du PDF…");
   try {
     const response = await api(`/reader/pdf?url=${encodeURIComponent(url)}`);
     await openDocument(new Uint8Array(await response.arrayBuffer()), meta);
   } catch (error) {
-    setStatus(`Impossible d'ouvrir ce PDF : ${error.message}`);
+    if (error.status === 403) showNotice(OTHER_LINKS_HELP);
+    setStatus(`Impossible d'ouvrir ce PDF : ${error.message === "not-public" ? "lien hors bibliothèque" : error.message}`);
     $("#picker").hidden = false;
   }
 }
@@ -606,6 +607,7 @@ function initControls() {
     const file = $("#file-input").files?.[0];
     if (!file) return;
     $("#doc-title").textContent = file.name;
+    state.doc = { url: "", key: "", title: file.name };
     try {
       await openDocument(new Uint8Array(await file.arrayBuffer()), { title: file.name });
     } catch (error) {
@@ -623,7 +625,7 @@ async function main() {
   const key = SEARCH.get("k");
   const url = SEARCH.get("url");
   await access;
-  // Without translation the French view would only repeat the original.
+  // Worker unreachable: the French view would only repeat the original.
   if (!state.canTranslate && state.mode !== "en") setMode("en", { persist: false });
   if (key) {
     const paper = await paperFromIndex(key);
@@ -633,7 +635,7 @@ async function main() {
       $("#picker").hidden = false;
       return;
     }
-    await openUrl(paper.pdf, { title: paper.t });
+    await openUrl(paper.pdf, { title: paper.t, key });
   } else if (url) {
     $("#doc-title").textContent = url.split("/").pop() || "PDF";
     await openUrl(url, { title: url.split("/").pop() });

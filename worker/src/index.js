@@ -10,11 +10,14 @@
  *              soon as the pipeline reports them (held during quiet hours).
  * - Pipeline : GitHub Actions pulls the decisions queued here (/api/events),
  *              acknowledges them once saved, and posts its run summary.
- * - Reader   : the PDF reader (site/reader.html, opened as a Telegram mini app)
- *              fetches PDFs through /reader/pdf and translates each page into
- *              French through /reader/translate (Gemini free key, cached in KV).
- *              Only the paired account can use it (Telegram initData or a signed
- *              token sent by /lecteur).
+ * - Reader   : the PDF reader (site/reader.html, also a Telegram mini app)
+ *              fetches PDFs through /reader/pdf and gets each page in French
+ *              from /reader/translate. Pages are cached in KV: the pipeline
+ *              translates papers ahead of time (/api/translations) and, when
+ *              the worker has its own GEMINI_API_KEY, any page is translated
+ *              on demand; otherwise the paper is queued for the next run.
+ *              Library PDFs work for everyone; any other URL needs the paired
+ *              account (Telegram initData or a signed token from /lecteur).
  *
  * Data comes from the static site (data/bot.json, data/learning.json).
  * Decisions are queued in KV and applied by the Python pipeline through the
@@ -27,7 +30,9 @@
  * Vars: SITE_URL. KV binding: PFE_STATE.
  */
 
-const VERSION = "3.0.0";
+import { geminiTranslate, translationHash, translationKey } from "./translate.js";
+
+const VERSION = "3.1.0";
 const DEFAULT_SITE = "https://pfe-hla.pages.dev";
 const BOT_HANDLE = "PFE_MN_bot";
 const DECIDED_TTL = 4 * 24 * 3600; // hide a decided paper until the pipeline syncs it
@@ -51,12 +56,30 @@ const CATCH_UP_MINUTES = 150; // a delayed tick still sends the slot, never hour
 const QUIET_FROM = 23 * 60; // alerts wait for 07:00
 const QUIET_TO = 7 * 60;
 
-// PDF reader: fast free Gemini models first (measured 2026-10-28).
-const READER_MODELS = ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gemini-3.5-flash"];
 const READER_TOKEN_DAYS = 120;
 const READER_MAX_BLOCKS = 160;
 const READER_MAX_CHARS = 24000;
-const READER_CACHE_VERSION = "v1";
+const READER_WANTED_MAX = 30;
+// Anonymous visitors (public site) share the free quota: per-instance limits.
+const READER_ANON_PER_HOUR = 90;
+const READER_ANON_GLOBAL_PER_HOUR = 400;
+// Open-access hosts a visitor may read without the pairing (plus every PDF of the library).
+const READER_PUBLIC_HOSTS = new Set([
+  "arxiv.org",
+  "export.arxiv.org",
+  "aclanthology.org",
+  "openreview.net",
+  "proceedings.neurips.cc",
+  "papers.nips.cc",
+  "proceedings.mlr.press",
+  "ojs.aaai.org",
+  "www.ijcai.org",
+  "ijcai.org",
+  "openaccess.thecvf.com",
+  "www.usenix.org",
+  "www.ndss-symposium.org",
+  "www.mdpi.com",
+]);
 const READER_ORIGINS = [
   /^https:\/\/([a-z0-9-]+\.)?pfe-hla\.pages\.dev$/,
   /^https:\/\/mvsss97\.github\.io$/,
@@ -1156,10 +1179,6 @@ async function hmacSha256(key, message) {
   return new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(message)));
 }
 
-async function sha256Hex(text) {
-  return hex(await crypto.subtle.digest("SHA-256", encoder.encode(text)));
-}
-
 /** Signed reader token for a computer browser: `${expiry}.${signature}`. */
 async function readerToken(env, nowMs = Date.now()) {
   const expiry = Math.floor(nowMs / 1000) + READER_TOKEN_DAYS * 86400;
@@ -1223,95 +1242,86 @@ function readerJson(request, data, status = 200) {
   });
 }
 
-const READER_PROMPT = [
-  "Tu traduis des blocs de texte extraits d'une page d'article scientifique (attaques adversariales, NLP, sécurité de l'IA) de l'anglais vers le français.",
-  "Règles : traduction fidèle et naturelle, en français scientifique ; un bloc traduit par bloc reçu, même identifiant `i` ;",
-  "ne fusionne pas et ne coupe pas les blocs ; garde inchangés les formules, variables, chiffres, citations ([12], (Jin et al., 2020)), URL, noms de méthodes, de modèles et de jeux de données ;",
-  "un bloc qui n'est pas du texte anglais (équation, nombre, code, nom propre seul) est recopié tel quel.",
-  "Glossaire : adversarial → adversarial, accordé normalement (adversariale, adversariaux, adversariales ; jamais « contradictoire ») ; hard-label → étiquette seule (hard-label) ; black-box → boîte noire ; query → requête ;",
-  "word importance ranking → classement d'importance des mots ; attack success rate → taux de succès de l'attaque ; robustness → robustesse ; embedding → plongement (embedding).",
-].join(" ");
+// Per-instance counters (reset every hour) protecting the free Gemini quota.
+const anonymousUse = { hour: -1, total: 0, byAddress: new Map() };
 
-async function geminiTranslate(env, texts) {
-  const body = {
-    systemInstruction: { parts: [{ text: READER_PROMPT }] },
-    contents: [{ role: "user", parts: [{ text: JSON.stringify(texts.map((text, i) => ({ i, en: text }))) }] }],
-    generationConfig: {
-      responseMimeType: "application/json",
-      responseJsonSchema: {
-        type: "object",
-        properties: {
-          blocks: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: { i: { type: "integer" }, fr: { type: "string" } },
-              required: ["i", "fr"],
-            },
-          },
-        },
-        required: ["blocks"],
-      },
-      temperature: 0.1,
-      maxOutputTokens: 32768,
-    },
-  };
-  let last = "no model";
-  for (const model of READER_MODELS) {
-    try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(60000),
-      });
-      if (!response.ok) {
-        last = `${model}: HTTP ${response.status}`;
-        continue;
-      }
-      const data = await response.json();
-      const parts = data?.candidates?.[0]?.content?.parts || [];
-      const parsed = JSON.parse(parts.filter((part) => !part.thought).map((part) => part.text || "").join(""));
-      const french = texts.map(() => null);
-      for (const block of parsed.blocks || []) {
-        if (Number.isInteger(block.i) && block.i >= 0 && block.i < texts.length && typeof block.fr === "string") french[block.i] = block.fr;
-      }
-      const missing = french.filter((value) => value === null).length;
-      if (missing > texts.length / 4) {
-        last = `${model}: ${missing} bloc(s) manquant(s)`;
-        continue;
-      }
-      return { fr: french, model: data.modelVersion || model };
-    } catch (error) {
-      last = `${model}: ${error.name || "error"}`;
-    }
+function allowAnonymousCall(request) {
+  const hour = Math.floor(Date.now() / 3600000);
+  if (anonymousUse.hour !== hour) {
+    anonymousUse.hour = hour;
+    anonymousUse.total = 0;
+    anonymousUse.byAddress.clear();
   }
-  throw new Error(`traduction impossible (${last})`);
+  const address = request.headers.get("CF-Connecting-IP") || "unknown";
+  const used = anonymousUse.byAddress.get(address) || 0;
+  if (used >= READER_ANON_PER_HOUR || anonymousUse.total >= READER_ANON_GLOBAL_PER_HOUR) return false;
+  anonymousUse.byAddress.set(address, used + 1);
+  anonymousUse.total += 1;
+  return true;
 }
 
-async function readerTranslate(request, env) {
-  if (!env.GEMINI_API_KEY) return readerJson(request, { ok: false, error: "missing-key" }, 503);
+async function libraryPdfs(env) {
+  const index = await loadData(env, "reader.json");
+  return new Set(Object.values(index?.papers || {}).map((paper) => paper.pdf).filter(Boolean));
+}
+
+async function publicPdf(env, target) {
+  let host = "";
+  try {
+    host = new URL(target).hostname.toLowerCase();
+  } catch (_error) {
+    return false;
+  }
+  return READER_PUBLIC_HOSTS.has(host) || (await libraryPdfs(env)).has(target);
+}
+
+/** Remember a paper the student opened, so the next pipeline run translates it. */
+async function rememberWanted(env, doc) {
+  const url = safeUrl(doc?.url);
+  if (!url) return false;
+  const wanted = await kvGet(env, "reader:wanted", {});
+  if (wanted[url]) return true;
+  wanted[url] = { key: cut(doc.key, 40), title: cut(doc.title, 200), at: new Date().toISOString() };
+  const urls = Object.keys(wanted).sort((a, b) => String(wanted[b].at).localeCompare(String(wanted[a].at)));
+  for (const old of urls.slice(READER_WANTED_MAX)) delete wanted[old];
+  await kvPut(env, "reader:wanted", wanted);
+  return true;
+}
+
+async function readerTranslate(request, env, authorized) {
   const payload = await request.json().catch(() => null);
   const texts = Array.isArray(payload?.texts) ? payload.texts.map((text) => String(text ?? "")) : null;
   if (!texts || !texts.length) return readerJson(request, { ok: false, error: "no texts" }, 400);
   if (texts.length > READER_MAX_BLOCKS || texts.join("").length > READER_MAX_CHARS) {
     return readerJson(request, { ok: false, error: "page too large" }, 413);
   }
-  const cacheKey = `tr:${READER_CACHE_VERSION}:${await sha256Hex(JSON.stringify(texts))}`;
+  const cacheKey = translationKey(await translationHash(texts));
   const cached = await kvGet(env, cacheKey, null);
   if (cached) return readerJson(request, { ok: true, cached: true, ...cached });
+  const doc = payload?.doc || {};
+  const queue = async () => {
+    const queued = await rememberWanted(env, doc);
+    return readerJson(request, { ok: false, queued, error: queued ? "queued" : "no-url" }, 202);
+  };
+  // Without its own key, the worker hands the paper to the next pipeline run.
+  if (!env.GEMINI_API_KEY) return queue();
+  if (!authorized && !allowAnonymousCall(request)) return queue();
   try {
-    const result = await geminiTranslate(env, texts);
+    const result = await geminiTranslate(env.GEMINI_API_KEY, texts);
     await kvPut(env, cacheKey, result);
     return readerJson(request, { ok: true, cached: false, ...result });
   } catch (error) {
+    await rememberWanted(env, doc);
     return readerJson(request, { ok: false, error: String(error.message || error) }, 502);
   }
 }
 
-async function readerPdf(request, env, url) {
+async function readerPdf(request, env, url, authorized) {
   const target = safeUrl(url.searchParams.get("url"));
   if (!target) return readerJson(request, { ok: false, error: "bad url" }, 400);
+  if (!authorized && !(await publicPdf(env, target))) {
+    return readerJson(request, { ok: false, error: "not-public" }, 403);
+  }
   let response;
   try {
     response = await fetch(target, {
@@ -1331,13 +1341,52 @@ async function readerPdf(request, env, url) {
 
 async function handleReader(request, env, url) {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
-  if (!(await readerAuthorized(request, env))) return readerJson(request, { ok: false, error: "unauthorized" }, 401);
+  const authorized = await readerAuthorized(request, env);
   if (url.pathname === "/reader/status") {
-    return readerJson(request, { ok: true, translate: Boolean(env.GEMINI_API_KEY), version: VERSION });
+    return readerJson(request, { ok: true, translate: Boolean(env.GEMINI_API_KEY), authorized, version: VERSION });
   }
-  if (url.pathname === "/reader/pdf" && request.method === "GET") return readerPdf(request, env, url);
-  if (url.pathname === "/reader/translate" && request.method === "POST") return readerTranslate(request, env);
+  if (url.pathname === "/reader/pdf" && request.method === "GET") return readerPdf(request, env, url, authorized);
+  if (url.pathname === "/reader/translate" && request.method === "POST") return readerTranslate(request, env, authorized);
   return readerJson(request, { ok: false, error: "not found" }, 404);
+}
+
+// ─── Translations made ahead of time by the pipeline ───────────────────────
+
+async function apiTranslationsState(env) {
+  return json({ wanted: await kvGet(env, "reader:wanted", {}), done: await kvGet(env, "reader:done", {}) });
+}
+
+async function apiTranslationsMissing(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const hashes = (Array.isArray(body.hashes) ? body.hashes : []).filter((hash) => /^[0-9a-f]{64}$/.test(hash)).slice(0, 200);
+  const missing = [];
+  for (const hash of hashes) {
+    if (!(await kvGet(env, translationKey(hash), null))) missing.push(hash);
+  }
+  return json({ missing });
+}
+
+async function apiTranslationsStore(request, env) {
+  const body = await request.json().catch(() => ({}));
+  let stored = 0;
+  for (const entry of (Array.isArray(body.entries) ? body.entries : []).slice(0, 50)) {
+    if (!/^[0-9a-f]{64}$/.test(String(entry?.hash)) || !Array.isArray(entry.fr)) continue;
+    const fr = entry.fr.map((value) => (typeof value === "string" ? value : null));
+    await kvPut(env, translationKey(entry.hash), { fr, model: String(entry.model || "pipeline") });
+    stored += 1;
+  }
+  const finished = (Array.isArray(body.done) ? body.done : []).map(safeUrl).filter(Boolean);
+  if (finished.length) {
+    const wanted = await kvGet(env, "reader:wanted", {});
+    const done = await kvGet(env, "reader:done", {});
+    for (const url of finished) {
+      delete wanted[url];
+      done[url] = new Date().toISOString();
+    }
+    await kvPut(env, "reader:wanted", wanted);
+    await kvPut(env, "reader:done", done);
+  }
+  return json({ ok: true, stored, done: finished.length });
 }
 
 async function cmdLecteur(env, chatId) {
@@ -1347,10 +1396,11 @@ async function cmdLecteur(env, chatId) {
     "Il ouvre l'article ici, dans Telegram, et traduit chaque page en français <b>sans changer la mise en page</b> (figures, colonnes et formules restent à leur place).",
     "• Boutons en haut : 🇬🇧 original · 🇫🇷 français · 🇬🇧|🇫🇷 les deux côte à côte.",
     "• Touche un paragraphe traduit pour revoir l'anglais.",
+    "• Les agents traduisent à l'avance les articles de ton encadrant et ceux que tu ouvres : rien à taper.",
     "• Les traductions sont gardées : la 2ᵉ ouverture est instantanée.",
     "",
-    "Les boutons « 📖 Lire » apparaissent sur les cartes d'articles, les fiches et la liste de l'encadrant.",
-    "💻 Sur l'ordinateur : ouvre une fois le lien « Activer sur ce navigateur » (valable 4 mois).",
+    "Les boutons « 📖 Lire » apparaissent sur les cartes d'articles, les fiches et la liste de l'encadrant ; sur le site, les articles de la bibliothèque s'ouvrent directement.",
+    "💻 Pour lire un lien qui n'est pas dans la bibliothèque sur l'ordinateur : « Activer sur ce navigateur » (valable 4 mois).",
     "⚠️ Le texte des pages est envoyé à Gemini (offre gratuite de Google) pour la traduction : n'y ouvre pas de document confidentiel.",
   ];
   return send(env, chatId, lines.join("\n"), {
@@ -2040,6 +2090,9 @@ export default {
       if (url.pathname === "/api/events" && request.method === "GET") return apiEvents(env);
       if (url.pathname === "/api/events/ack" && request.method === "POST") return apiAck(request, env);
       if (url.pathname === "/api/pipeline" && request.method === "POST") return apiPipeline(request, env);
+      if (url.pathname === "/api/translations/state" && request.method === "GET") return apiTranslationsState(env);
+      if (url.pathname === "/api/translations/missing" && request.method === "POST") return apiTranslationsMissing(request, env);
+      if (url.pathname === "/api/translations" && request.method === "POST") return apiTranslationsStore(request, env);
       if (url.pathname === "/api/push" && request.method === "POST") {
         // Manual trigger of a scheduled slot, e.g. to test the morning briefing.
         const slot = url.searchParams.get("slot") || "morning";

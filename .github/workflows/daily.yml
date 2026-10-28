@@ -205,6 +205,21 @@ jobs:
       - name: Tell the Telegram bot what the agents did
         run: python -m pfe_hla notify --since "${{ steps.start.outputs.at }}" ${{ steps.start.outputs.full != 'true' && '--light' || '' }}
 
+      - uses: actions/setup-node@v4
+        if: github.event_name != 'push'
+        with:
+          node-version: "22"
+
+      - name: Translate PDFs ahead of time for the bilingual reader
+        # Papers the student opened first, then the supervisor's list; pages are
+        # stored in the bot's cache, so the reader shows them in French at once.
+        if: github.event_name != 'push'
+        continue-on-error: true
+        timeout-minutes: 25
+        env:
+          READER_PAGE_BUDGET: ${{ steps.start.outputs.full == 'true' && '40' || '24' }}
+        run: node scripts/pretranslate.mjs
+
       - name: Keep the schedule alive
         continue-on-error: true
         env:

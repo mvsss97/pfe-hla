@@ -533,7 +533,7 @@ test("paper cards and word cards show the French under the English", async () =>
   assert.match(sentTexts(calls)[0], /🇫🇷 owner\/llm-guard \(scanner\)/);
 });
 
-test("reader API: CORS, and only the paired account gets in", async () => {
+test("reader API: CORS, public status, and the paired account is recognised", async () => {
   const { env, calls } = setup();
   const preflight = await worker.fetch(readerRequest("/reader/status", { method: "OPTIONS" }), env, { waitUntil() {} });
   assert.equal(preflight.status, 204);
@@ -541,32 +541,55 @@ test("reader API: CORS, and only the paired account gets in", async () => {
   const foreign = await worker.fetch(readerRequest("/reader/status", { method: "OPTIONS", origin: "https://evil.example" }), env, { waitUntil() {} });
   assert.equal(foreign.headers.get("Access-Control-Allow-Origin"), null);
 
-  assert.equal((await worker.fetch(readerRequest("/reader/status"), env, { waitUntil() {} })).status, 401);
-  assert.equal((await worker.fetch(readerRequest("/reader/status", { auth: "Bearer 9999999999.forged" }), env, { waitUntil() {} })).status, 401);
-
+  const status = async (auth) => (await worker.fetch(readerRequest("/reader/status", { auth }), env, { waitUntil() {} })).json();
+  assert.deepEqual(await status(null), { ok: true, translate: false, authorized: false, version: (await (await worker.fetch(new Request("https://bot.test/health"), env, {})).json()).version });
+  assert.equal((await status("Bearer 9999999999.forged")).authorized, false);
   const token = await readerTokenFromBot(env, calls);
-  const status = await worker.fetch(readerRequest("/reader/status", { auth: `Bearer ${token}` }), env, { waitUntil() {} });
-  assert.equal(status.status, 200);
-  assert.deepEqual(await status.json(), { ok: true, translate: false, version: (await (await worker.fetch(new Request("https://bot.test/health"), env, {})).json()).version });
-
-  const owner = await worker.fetch(readerRequest("/reader/status", { auth: `tma ${initData(CHAT)}` }), env, { waitUntil() {} });
-  assert.equal(owner.status, 200, "Telegram mini-app launch data of the paired account");
-  const stranger = await worker.fetch(readerRequest("/reader/status", { auth: `tma ${initData(7)}` }), env, { waitUntil() {} });
-  assert.equal(stranger.status, 401, "another Telegram user");
-  const forged = await worker.fetch(readerRequest("/reader/status", { auth: `tma ${initData(CHAT, "OTHER:TOKEN")}` }), env, { waitUntil() {} });
-  assert.equal(forged.status, 401, "launch data signed with another bot token");
-  const stale = await worker.fetch(readerRequest("/reader/status", { auth: `tma ${initData(CHAT, BOT_TOKEN, 1_000_000)}` }), env, { waitUntil() {} });
-  assert.equal(stale.status, 401, "old launch data");
+  assert.equal((await status(`Bearer ${token}`)).authorized, true);
+  assert.equal((await status(`tma ${initData(CHAT)}`)).authorized, true, "Telegram mini-app launch data of the paired account");
+  assert.equal((await status(`tma ${initData(7)}`)).authorized, false, "another Telegram user");
+  assert.equal((await status(`tma ${initData(CHAT, "OTHER:TOKEN")}`)).authorized, false, "signed with another bot token");
+  assert.equal((await status(`tma ${initData(CHAT, BOT_TOKEN, 1_000_000)}`)).authorized, false, "old launch data");
 });
 
-test("reader translation goes through Gemini once, then the KV cache", async () => {
+async function pipelineApi(env, path, body) {
+  const init = { headers: { Authorization: "Bearer pipe-secret" } };
+  if (body !== undefined) Object.assign(init, { method: "POST", body: JSON.stringify(body) });
+  return worker.fetch(new Request(`https://bot.test${path}`, init), env, { waitUntil() {} });
+}
+
+test("without its own key the bot queues the paper; the pipeline's translation is then served to anyone", async () => {
+  const { env } = setup();
+  const texts = ["The attack only observes the predicted label.", "Related Work"];
+  const doc = { url: "https://arxiv.org/pdf/2012.14956", key: "cccccccccc", title: "HLBB" };
+  const queued = await worker.fetch(readerRequest("/reader/translate", { method: "POST", body: { texts, doc } }), env, { waitUntil() {} });
+  assert.equal(queued.status, 202);
+  assert.deepEqual(await queued.json(), { ok: false, queued: true, error: "queued" });
+
+  assert.equal((await worker.fetch(new Request("https://bot.test/api/translations/state"), env, {})).status, 403, "pipeline API is protected");
+  const state = await (await pipelineApi(env, "/api/translations/state")).json();
+  assert.deepEqual(Object.keys(state.wanted), [doc.url]);
+
+  const { translationHash } = await import("../src/translate.js");
+  const hash = await translationHash(texts);
+  assert.deepEqual((await (await pipelineApi(env, "/api/translations/missing", { hashes: [hash, "nope"] })).json()).missing, [hash]);
+  const stored = await (await pipelineApi(env, "/api/translations", { entries: [{ hash, fr: ["FR 1", "Travaux connexes"], model: "ci" }], done: [doc.url] })).json();
+  assert.deepEqual(stored, { ok: true, stored: 1, done: 1 });
+  const after = await (await pipelineApi(env, "/api/translations/state")).json();
+  assert.deepEqual(after.wanted, {});
+  assert.ok(after.done[doc.url]);
+
+  const served = await (await worker.fetch(readerRequest("/reader/translate", { method: "POST", body: { texts, doc } }), env, { waitUntil() {} })).json();
+  assert.deepEqual(served, { ok: true, cached: true, fr: ["FR 1", "Travaux connexes"], model: "ci" });
+  const local = await worker.fetch(readerRequest("/reader/translate", { method: "POST", body: { texts: ["Another page of a local file here."], doc: { url: "" } } }), env, { waitUntil() {} });
+  assert.deepEqual(await local.json(), { ok: false, queued: false, error: "no-url" });
+});
+
+test("with its own key the bot translates on demand, once, then from the KV cache", async () => {
   const { env, calls } = setup();
   const token = await readerTokenFromBot(env, calls);
   const auth = `Bearer ${token}`;
   const texts = ["The attack only observes the predicted label.", "Related Work"];
-  const missing = await worker.fetch(readerRequest("/reader/translate", { auth, method: "POST", body: { texts } }), env, { waitUntil() {} });
-  assert.equal(missing.status, 503, "no Gemini key yet");
-
   env.GEMINI_API_KEY = "gemini-test-key";
   const siteFetch = globalThis.fetch;
   let geminiCalls = 0;
@@ -587,9 +610,9 @@ test("reader translation goes through Gemini once, then the KV cache", async () 
     assert.deepEqual(first.fr, texts.map((text) => `FR:${text}`));
     assert.equal(first.cached, false);
     assert.equal(geminiCalls, 2, "a busy model is skipped for the next one");
-    const second = await (await worker.fetch(readerRequest("/reader/translate", { auth, method: "POST", body: { texts } }), env, { waitUntil() {} })).json();
-    assert.equal(second.cached, true);
-    assert.equal(geminiCalls, 2, "the second reader gets the cached page");
+    const second = await (await worker.fetch(readerRequest("/reader/translate", { method: "POST", body: { texts } }), env, { waitUntil() {} })).json();
+    assert.equal(second.cached, true, "an anonymous visitor gets the cached page");
+    assert.equal(geminiCalls, 2);
     const tooBig = await worker.fetch(readerRequest("/reader/translate", { auth, method: "POST", body: { texts: Array(200).fill("text") } }), env, { waitUntil() {} });
     assert.equal(tooBig.status, 413);
   } finally {
@@ -597,28 +620,28 @@ test("reader translation goes through Gemini once, then the KV cache", async () 
   }
 });
 
-test("reader PDF proxy streams PDFs only", async () => {
+test("reader PDF proxy: library and open-access PDFs for everyone, other links for the paired account", async () => {
   const { env, calls } = setup();
   const token = await readerTokenFromBot(env, calls);
   const siteFetch = globalThis.fetch;
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     if (url === "https://arxiv.org/pdf/2012.14956") return new Response("%PDF-1.5 fake", { headers: { "Content-Type": "application/pdf" } });
+    if (url === "https://repository.example.edu/paper.pdf") return new Response("%PDF-1.7 repo", { headers: { "Content-Type": "application/pdf" } });
     if (url === "https://example.org/page") return new Response("<html>", { headers: { "Content-Type": "text/html" } });
+    if (url.endsWith("/data/reader.json")) return new Response(JSON.stringify({ papers: { k1: { t: "Repo paper", pdf: "https://repository.example.edu/paper.pdf" } } }));
     return siteFetch(input, init);
   };
+  const open = (target, auth = null) => worker.fetch(readerRequest(`/reader/pdf?url=${encodeURIComponent(target)}`, { auth }), env, { waitUntil() {} });
   try {
-    const auth = `Bearer ${token}`;
-    const pdf = await worker.fetch(readerRequest(`/reader/pdf?url=${encodeURIComponent("https://arxiv.org/pdf/2012.14956")}`, { auth }), env, { waitUntil() {} });
-    assert.equal(pdf.status, 200);
-    assert.equal(await pdf.text(), "%PDF-1.5 fake");
-    assert.equal(pdf.headers.get("Access-Control-Allow-Origin"), "https://pfe-hla.pages.dev");
-    const html = await worker.fetch(readerRequest(`/reader/pdf?url=${encodeURIComponent("https://example.org/page")}`, { auth }), env, { waitUntil() {} });
-    assert.equal(html.status, 415);
-    const local = await worker.fetch(readerRequest(`/reader/pdf?url=${encodeURIComponent("file:///etc/passwd")}`, { auth }), env, { waitUntil() {} });
-    assert.equal(local.status, 400);
-    const anonymous = await worker.fetch(readerRequest(`/reader/pdf?url=${encodeURIComponent("https://arxiv.org/pdf/2012.14956")}`), env, { waitUntil() {} });
-    assert.equal(anonymous.status, 401);
+    const arxiv = await open("https://arxiv.org/pdf/2012.14956");
+    assert.equal(arxiv.status, 200, "open-access host, no pairing needed");
+    assert.equal(await arxiv.text(), "%PDF-1.5 fake");
+    assert.equal(arxiv.headers.get("Access-Control-Allow-Origin"), "https://pfe-hla.pages.dev");
+    assert.equal((await open("https://repository.example.edu/paper.pdf")).status, 200, "a PDF of the library");
+    assert.equal((await open("https://example.org/page")).status, 403, "any other link needs the pairing");
+    assert.equal((await open("https://example.org/page", `Bearer ${token}`)).status, 415, "paired: fetched, but not a PDF");
+    assert.equal((await open("file:///etc/passwd", `Bearer ${token}`)).status, 400);
   } finally {
     globalThis.fetch = siteFetch;
   }
