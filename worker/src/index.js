@@ -32,7 +32,7 @@
 
 import { geminiTranslate, translationHash, translationKey } from "./translate.js";
 
-const VERSION = "3.1.0";
+const VERSION = "3.2.0";
 const DEFAULT_SITE = "https://pfe-hla.pages.dev";
 const BOT_HANDLE = "PFE_MN_bot";
 const DECIDED_TTL = 4 * 24 * 3600; // hide a decided paper until the pipeline syncs it
@@ -112,9 +112,9 @@ const MENU_KEYBOARD = {
   keyboard: [
     [{ text: "📥 Trier" }, { text: "📄 Fiches" }],
     [{ text: "🧠 Apprendre" }, { text: "🇬🇧 Anglais" }],
-    [{ text: "📰 Actus sécu" }, { text: "🎓 Encadrant" }],
-    [{ text: "📖 Lecteur PDF" }, { text: "📊 PRISMA" }],
-    [{ text: "✍️ Rédaction" }, { text: "📱 App" }],
+    [{ text: "📰 Actus sécu" }, { text: "💥 Cyberattaques" }],
+    [{ text: "🎓 Encadrant" }, { text: "📖 Lecteur PDF" }],
+    [{ text: "📊 PRISMA" }, { text: "✍️ Rédaction" }],
     [{ text: "🗓 Plan du jour" }, { text: "☰ Menu" }],
   ],
   resize_keyboard: true,
@@ -128,6 +128,7 @@ const TEXT_ALIASES = {
   "📰 actus sécu": "/actus",
   "🎓 encadrant": "/encadrant",
   "📖 lecteur pdf": "/lecteur",
+  "💥 cyberattaques": "/cyber",
   "📱 app": "/app",
   "📊 prisma": "/prisma",
   "✍️ rédaction": "/redaction",
@@ -142,6 +143,7 @@ const BOT_COMMANDS = [
   ["encadrant", "Articles conseillés par l'encadrant"],
   ["these", "Plan de lecture de la thèse de l'encadrant"],
   ["actus", "Actus sécurité IA : failles, dépôts, incidents"],
+  ["cyber", "Cyberattaques expliquées : comment, et comment s'en protéger"],
   ["lecteur", "Lire un PDF traduit en français (même mise en page)"],
   ["app", "Ouvrir le tableau de bord dans Telegram"],
   ["prisma", "Compteurs PRISMA"],
@@ -194,6 +196,10 @@ const COMMAND_ALIASES = {
   "/reader": "/lecteur",
   "/lire": "/lecteur",
   "/app": "/app",
+  "/cyber": "/cyber",
+  "/incidents": "/cyber",
+  "/hacks": "/cyber",
+  "/piratages": "/cyber",
 };
 
 const KIND_LABELS = {
@@ -202,12 +208,14 @@ const KIND_LABELS = {
   incident: "⚠️ Incident IA",
   article: "📰 Article",
   paper: "📄 Recherche",
+  cyber: "💥 Cyberattaque",
 };
 const KIND_FILTERS = [
   ["all", "Tout"],
+  ["cyber", "💥 Cyberattaques"],
   ["vulnerability", "🔓 Failles"],
+  ["incident", "⚠️ Incidents IA"],
   ["repo", "🧪 Dépôts"],
-  ["incident", "⚠️ Incidents"],
   ["article", "📰 Presse"],
   ["paper", "📄 Recherche"],
 ];
@@ -222,6 +230,11 @@ const SOURCE_LABELS = {
   securityweek: "SecurityWeek",
   aiid: "AI Incident Database",
   arxiv: "arXiv cs.CR",
+  krebsonsecurity: "Krebs on Security",
+  therecord: "The Record",
+  databreaches: "DataBreaches.net",
+  rekt: "rekt.news",
+  cointelegraph: "Cointelegraph",
 };
 const SEVERITY_RANK = { alert: 0, notable: 1, info: 2 };
 const READING_ICONS = { sheet: "✅", queued: "⏳", no_pdf: "📕", error: "⚠️", not_queued: "▫️" };
@@ -677,8 +690,9 @@ async function cmdHelp(env, chatId) {
     "📚 <b>Ton assistant PFE</b>\n\n" +
       "Je t'écris moi-même chaque jour :\n" +
       "☀️ 08:00 plan du jour · 🇬🇧 10:00 et 15:30 pause anglais · 📥 13:00 tri\n" +
-      "📰 18:00 actus sécurité IA · 🌙 20:00 bilan (quiz + mots)\n" +
-      "🚨 et tout de suite en cas de faille grave liée à l'IA (sauf la nuit, 23:00–07:00).\n" +
+      "📰 18:00 actus sécurité (IA + grandes cyberattaques) · 🌙 20:00 bilan (quiz + mots)\n" +
+      "🚨 et tout de suite en cas de faille grave liée à l'IA ou de cyberattaque majeure (sauf la nuit, 23:00–07:00).\n" +
+      "💥 /cyber : chaque grande attaque expliquée (comment, et comment s'en protéger).\n" +
       "📖 Le lecteur PDF traduit les articles en français en gardant la mise en page : /lecteur\n" +
       "Tout se règle dans /reglages.\n\n" +
       "Tu peux aussi utiliser les boutons du clavier ou ces commandes :\n\n" +
@@ -705,7 +719,10 @@ async function cmdMenu(env, chatId) {
           { text: "📘 Thèse", callback_data: "m:these" },
         ],
         [
-          { text: "📰 Actus sécurité IA", callback_data: "m:actus" },
+          { text: "📰 Actus sécurité", callback_data: "m:actus" },
+          { text: "💥 Cyberattaques", callback_data: "m:cyber" },
+        ],
+        [
           { text: "📊 PRISMA", callback_data: "m:prisma" },
         ],
         [
@@ -1031,9 +1048,22 @@ async function cmdSettings(env, chatId, messageId = null) {
 
 // ─── AI-security news and alerts ───────────────────────────────────────────
 
+function formatUsd(value) {
+  const amount = Number(value) || 0;
+  if (amount >= 1e9) return `${(amount / 1e9).toFixed(1).replace(".", ",")} Md$`;
+  if (amount >= 1e6) return `${Math.round(amount / 1e6)} M$`;
+  return "";
+}
+
 function newsLine(item) {
   const icon = item.severity === "alert" ? "🚨" : item.severity === "notable" ? "🔸" : "▫️";
-  const extra = item.stars ? ` ⭐${item.stars}` : item.cvss ? ` · CVSS ${item.cvss}` : "";
+  const money = formatUsd(item.usd);
+  const extra = [
+    item.stars ? ` ⭐${item.stars}` : item.cvss ? ` · CVSS ${item.cvss}` : "",
+    money ? ` · 💸 ${money}` : "",
+    item.articles > 1 ? ` · ${item.articles} articles` : "",
+    item.report ? " · 🔎 expliqué" : "",
+  ].join("");
   const source = SOURCE_LABELS[item.source] || item.source || "";
   const summary = item.summary ? `\n<i>${esc(cut(item.summary, 230))}</i>${item.fr ? "" : " 🇬🇧"}` : "";
   const titleFr = item.titleFr ? `\n🇫🇷 ${esc(cut(item.titleFr, 160))}` : "";
@@ -1047,11 +1077,80 @@ function newsButtons(env, active = "all") {
   }));
   return {
     inline_keyboard: [
-      filters.slice(0, 3),
-      filters.slice(3),
+      filters.slice(0, 4),
+      filters.slice(4),
+      [{ text: "💥 Cyberattaques expliquées", callback_data: "m:cyber" }],
       [{ text: "🌐 Toutes les actus sur le site", url: `${siteUrl(env)}/#actus` }],
     ],
   };
+}
+
+// ─── Cyber incidents explained by the analyst agent ─────────────────────────
+
+function incidentText(incident) {
+  const report = incident.report;
+  const titleFr = incident.titleFr || report?.titre_fr;
+  const meta = [
+    SOURCE_LABELS[incident.source] || incident.source || "",
+    String(incident.at || "").slice(0, 10),
+    formatUsd(incident.usd) ? `💸 ${formatUsd(incident.usd)}` : "",
+    incident.articles > 1 ? `${incident.articles} articles` : "",
+    report?.fiabilite || "",
+  ].filter(Boolean);
+  const lines = [`💥 <b>${esc(cut(incident.title, 220))}</b>`];
+  if (titleFr) lines.push(`🇫🇷 <i>${esc(cut(titleFr, 220))}</i>`);
+  lines.push(esc(meta.join(" · ")), "");
+  if (!report) {
+    lines.push(`<i>${esc(cut(incident.summary, 500))}</i>`, "", "🕵️ L'analyste prépare l'explication détaillée (comment, et comment s'en protéger) au prochain passage des agents.");
+  } else {
+    lines.push(`🇬🇧 <i>${esc(report.resume_en)}</i>`, `🇫🇷 ${esc(report.resume_fr)}`, "");
+    lines.push(`🎯 <b>Victime :</b> ${esc(report.victime)}`, `🕵️ <b>Attaquants :</b> ${esc(report.attaquants)}`, "");
+    lines.push("🛠 <b>Comment ils ont procédé :</b>", ...(report.methode || []).map((step, index) => `${index + 1}. ${esc(step)}`), "");
+    lines.push(`💸 <b>Conséquences :</b> ${esc(report.impact)}`, "");
+    lines.push("🛡 <b>Comment s'en protéger :</b>", ...(report.defense || []).map((item) => `• ${esc(item)}`));
+    if (report.lien_ia) lines.push("", `🤖 <b>Lien avec l'IA :</b> ${esc(report.lien_ia)}`);
+    if ((report.termes || []).length) {
+      lines.push("", `🇬🇧 Mots : ${report.termes.map((term) => `<b>${esc(term.en)}</b> = ${esc(term.fr)}`).join(" · ")}`);
+    }
+  }
+  if (safeUrl(incident.url)) lines.push("", `🔗 ${link(incident.url, "Article source")}`);
+  return fitLines(lines);
+}
+
+function findIncident(data, id) {
+  const number = Number(id);
+  return (data?.incidents || []).find((item) => item.id === number || item.event === number) || null;
+}
+
+async function cmdCyber(env, chatId) {
+  const data = await loadData(env, "incidents.json");
+  const incidents = (data?.incidents || []).slice(0, 8);
+  const buttons = [
+    [{ text: "📚 Grandes attaques expliquées (cours)", callback_data: "l:o:cyber" }],
+    [{ text: "🌐 Toutes sur le site", url: `${siteUrl(env)}/#actus` }],
+  ];
+  if (!incidents.length) {
+    return send(env, chatId, "💥 <b>Cyberattaques</b>\nPas encore d'attaque majeure cette semaine. En attendant, les grands cas célèbres sont expliqués dans le cours.", {
+      reply_markup: { inline_keyboard: buttons },
+    });
+  }
+  const lines = [
+    "💥 <b>Cyberattaques récentes</b>",
+    "Touche 🔎 pour savoir comment les attaquants ont fait et comment s'en protéger.",
+    "",
+    ...incidents.map((incident, index) => {
+      const icon = incident.severity === "alert" ? "🚨" : "🔸";
+      const money = formatUsd(incident.usd);
+      const details = [money ? `💸 ${money}` : "", incident.articles > 1 ? `${incident.articles} articles` : "", incident.report ? "🔎 expliqué" : "⏳ en analyse"]
+        .filter(Boolean)
+        .join(" · ");
+      return `${index + 1}. ${icon} <b>${esc(cut(incident.titleFr || incident.title, 120))}</b>\n    ${esc(details)}`;
+    }),
+  ];
+  const picks = incidents.map((incident, index) => ({ text: `🔎 ${index + 1}`, callback_data: `x:${incident.id}` }));
+  const rows = [];
+  for (let index = 0; index < picks.length; index += 4) rows.push(picks.slice(index, index + 4));
+  return send(env, chatId, fitLines(lines), { reply_markup: { inline_keyboard: [...rows, ...buttons] } });
 }
 
 async function cmdActus(env, chatId, kind = "all", messageId = null) {
@@ -1095,8 +1194,8 @@ async function newsDigest(env, chatId, nowMs = Date.now()) {
   for (const item of fresh) seen[hashTerm(item.key)] = Date.now() + NEWS_TTL * 1000;
   await kvPut(env, "recent:news", seen);
   const text = fitLines([
-    `📰 <b>Actus sécurité IA du jour</b> (${fresh.length})`,
-    "Failles, nouveaux dépôts GitHub/GitLab, incidents IA, presse et recherche.",
+    `📰 <b>Actus sécurité du jour</b> (${fresh.length})`,
+    "Cyberattaques, failles, nouveaux dépôts GitHub/GitLab, incidents IA, presse et recherche.",
     "",
     ...fresh.map(newsLine),
   ]);
@@ -1104,7 +1203,9 @@ async function newsDigest(env, chatId, nowMs = Date.now()) {
 }
 
 function alertText(alerts) {
-  const lines = [`🚨 <b>Alerte sécurité IA</b>${alerts.length > 1 ? ` (${alerts.length})` : ""}`, ""];
+  const cyber = alerts.some((alert) => alert.kind === "cyber");
+  const heading = alerts.every((alert) => alert.kind === "cyber") ? "Alerte cyberattaque" : "Alerte sécurité";
+  const lines = [`🚨 <b>${heading}</b>${alerts.length > 1 ? ` (${alerts.length})` : ""}`, ""];
   for (const alert of alerts.slice(0, 5)) {
     lines.push(`<b>${esc(cut(alert.title, 180))}</b>`);
     if (alert.titleFr) lines.push(`🇫🇷 <b>${esc(cut(alert.titleFr, 180))}</b>`);
@@ -1113,7 +1214,10 @@ function alertText(alerts) {
     if (safeUrl(alert.url)) lines.push(`🔗 ${link(alert.url, "Détails")}`);
     lines.push("");
   }
-  lines.push("Pourquoi une alerte : faille critique, ou activement exploitée, qui touche un logiciel d'IA.");
+  if (alerts.some((alert) => alert.kind !== "cyber")) {
+    lines.push("Pourquoi une alerte : faille critique, ou activement exploitée, qui touche un logiciel d'IA.");
+  }
+  if (cyber) lines.push("Pourquoi une alerte : attaque d'ampleur exceptionnelle (≥ 50 M$ volés ou ≥ 10 millions de personnes touchées).");
   return fitLines(lines);
 }
 
@@ -1151,9 +1255,11 @@ async function flushAlerts(env, { chatId = null, settings = null, nowMs = Date.n
   for (const alert of pending) seen[hashTerm(alert.key)] = Date.now() + ALERT_TTL * 1000;
   await kvPut(env, "recent:alerts", seen);
   if (!chat || !config.alerts || isPaused(config, nowMs)) return false;
+  const event = pending.map((alert) => /^event:(\d+)$/.exec(alert.key)?.[1]).find(Boolean);
   await send(env, chat, alertText(pending), {
     reply_markup: {
       inline_keyboard: [
+        ...(event ? [[{ text: "🔎 Comment ont-ils fait ? Comment s'en protéger ?", callback_data: `x:${event}` }]] : []),
         [
           { text: "📰 Toutes les actus", callback_data: "n:all" },
           { text: "🔕 Couper les alertes", callback_data: "set:alerts" },
@@ -1585,6 +1691,8 @@ async function runCommand(env, chatId, command, args = "") {
       return cmdQuestions(env, chatId);
     case "/lecteur":
       return cmdLecteur(env, chatId);
+    case "/cyber":
+      return cmdCyber(env, chatId);
     case "/app":
       return send(env, chatId, "📱 <b>Le tableau de bord dans Telegram</b>\nTouche le bouton : le site s'ouvre ici, sans quitter Telegram.", {
         reply_markup: { inline_keyboard: [[{ text: "📱 Ouvrir l'app", web_app: { url: `${siteUrl(env)}/` } }]] },
@@ -1816,6 +1924,16 @@ async function handleCallback(env, callback) {
     await answer(env, callback.id);
     const fromNews = String(callback.message?.text || "").startsWith("📰 Actus sécurité IA ·");
     return cmdActus(env, chatId, kind, fromNews ? messageId : null);
+  }
+
+  // A cyber incident explained (from /cyber, the digest or an alert)
+  if (parts[0] === "x" && parts[1]) {
+    await answer(env, callback.id);
+    const incident = findIncident(await loadData(env, "incidents.json"), parts[1]);
+    if (!incident) return send(env, chatId, "🕵️ L'analyste n'a pas encore traité cet événement : son explication arrive au prochain passage des agents (≈ 3 h).");
+    return send(env, chatId, incidentText(incident), {
+      reply_markup: { inline_keyboard: [[{ text: "💥 Autres cyberattaques", callback_data: "m:cyber" }, { text: "📚 Cours", callback_data: "l:o:cyber" }]] },
+    });
   }
 
   // Thesis reading plan: tick a part as read

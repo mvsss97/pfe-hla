@@ -554,17 +554,17 @@
 
         <section class="view" id="actus" data-view="actus" aria-labelledby="actus-title" hidden>
           <div class="page-intro slim">
-            <div><p class="eyebrow"><span></span>Agent veilleur · ~8 passages par jour</p><h1 id="actus-title">Actus sécurité de l’IA</h1><p>Nouvelles failles (CVE, avis GitHub, failles exploitées CISA), nouveaux dépôts GitHub/GitLab sur la sécurité de l’IA, incidents IA, presse spécialisée et articles arXiv. Les résumés en français sont écrits par l’agent veilleur.</p></div>
+            <div><p class="eyebrow"><span></span>Agent veilleur · ~8 passages par jour</p><h1 id="actus-title">Actus sécurité</h1><p>Grandes cyberattaques (piratages de plateformes crypto, fuites de données, rançongiciels…), failles (CVE, avis GitHub, failles exploitées CISA), nouveaux dépôts GitHub/GitLab sur la sécurité de l’IA, incidents IA, presse spécialisée et articles arXiv. Les articles d’un même événement sont regroupés ; l’agent analyste explique chaque grande attaque : ce qui s’est passé, comment les attaquants ont fait, et comment s’en protéger.</p></div>
             <div class="page-count"><strong id="news-count">0</strong><span>actus</span></div>
           </div>
 
           <div class="filter-bar" aria-label="Filtrer les actus">
             <label class="search-field"><span>Rechercher</span><input id="news-search" type="search" placeholder="LLM, CVE, LangChain…" autocomplete="off"></label>
-            <label><span>Type</span><select id="news-kind"><option value="all">Tout</option><option value="vulnerability">Failles</option><option value="repo">Dépôts</option><option value="incident">Incidents IA</option><option value="article">Presse</option><option value="paper">Recherche</option></select></label>
+            <label><span>Type</span><select id="news-kind"><option value="all">Tout</option><option value="cyber">💥 Cyberattaques</option><option value="vulnerability">Failles</option><option value="repo">Dépôts</option><option value="incident">Incidents IA</option><option value="article">Presse</option><option value="paper">Recherche</option></select></label>
             <label><span>Importance</span><select id="news-severity"><option value="all">Toutes</option><option value="alert">Alertes</option><option value="notable">Importantes et alertes</option></select></label>
           </div>
 
-          <div class="seed-note" role="note"><b>🚨 Alerte</b> = faille critique, ou activement exploitée, qui touche un logiciel d’IA : le bot te prévient tout de suite (sauf la nuit). <b>🔸 Important</b> = à lire. Les autres actus arrivent dans le résumé Telegram de 18:00.</div>
+          <div class="seed-note" role="note"><b>🚨 Alerte</b> = faille critique ou exploitée qui touche un logiciel d’IA, ou cyberattaque majeure (≥ 50 M$ volés ou ≥ 10 millions de personnes touchées) : le bot te prévient tout de suite (sauf la nuit). <b>🔸 Important</b> = à lire. Les autres actus arrivent dans le résumé Telegram de 18:00.</div>
 
           <div class="paper-grid" id="news-grid"></div>
           <div class="empty-state" id="news-empty"><span>∅</span><h2>Pas encore d’actus</h2><p>L’agent veilleur publiera ici les premières actus à son prochain passage.</p></div>

@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "titre_fr": {"type": "string"},
+    "resume_en": {"type": "string"},
+    "resume_fr": {"type": "string"},
+    "victime": {"type": "string"},
+    "attaquants": {"type": "string"},
+    "methode": {"type": "array", "items": {"type": "string"}},
+    "impact": {"type": "string"},
+    "defense": {"type": "array", "items": {"type": "string"}},
+    "lien_ia": {"type": "string"},
+    "fiabilite": {"type": "string", "enum": ["confirmé", "en cours d'enquête", "non précisé"]},
+    "termes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {"en": {"type": "string"}, "fr": {"type": "string"}},
+        "required": ["en", "fr"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "titre_fr", "resume_en", "resume_fr", "victime", "attaquants", "methode", "impact",
+    "defense", "lien_ia", "fiabilite", "termes"
+  ],
+  "additionalProperties": false
+}

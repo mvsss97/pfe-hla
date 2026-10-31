@@ -142,18 +142,18 @@ jobs:
         continue-on-error: true
         run: python -m pfe_hla fetch-queue --limit 4 --auto-queue 5
 
-      - name: AI agents — sort, read, compare, summarise news, translate
+      - name: AI agents — sort, read, compare, summarise news, explain attacks, translate
         # Not on every code push: the free Gemini quota is kept for the schedule.
         if: github.event_name != 'push' && steps.start.outputs.full == 'true'
         timeout-minutes: 45
         continue-on-error: true
         run: python -m pfe_hla agents --max-screen 50 --max-read 4
 
-      - name: AI agents — light run (news summaries and translations only)
+      - name: AI agents — light run (news summaries, attack explanations, translations)
         if: steps.start.outputs.full != 'true'
         timeout-minutes: 15
         continue-on-error: true
-        run: python -m pfe_hla agents --max-screen 0 --max-read 0 --no-synthesis --max-news 30 --max-translate 36
+        run: python -m pfe_hla agents --max-screen 0 --max-read 0 --no-synthesis --max-news 30 --max-translate 36 --max-incidents 4
 
       - name: Export the dashboard data
         run: python -m pfe_hla export

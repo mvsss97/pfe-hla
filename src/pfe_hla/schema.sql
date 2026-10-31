@@ -300,6 +300,16 @@ CREATE TABLE IF NOT EXISTS news_items (
 
 CREATE INDEX IF NOT EXISTS idx_news_collected ON news_items(collected_at DESC);
 
+-- Explanation of a major cyber incident by the analyst agent (what, how, defence).
+CREATE TABLE IF NOT EXISTS incident_reports (
+    news_id INTEGER PRIMARY KEY REFERENCES news_items(id) ON DELETE CASCADE,
+    report_json TEXT NOT NULL,
+    source_chars INTEGER NOT NULL DEFAULT 0,
+    model TEXT NOT NULL DEFAULT '',
+    prompt_version TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
 -- French title and abstract written by the translator agent (the English stays the reference).
 CREATE TABLE IF NOT EXISTS paper_translations (
     paper_id INTEGER PRIMARY KEY REFERENCES papers(id) ON DELETE CASCADE,

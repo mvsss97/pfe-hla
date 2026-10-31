@@ -1,12 +1,14 @@
 """AI research agents orchestrated from Python.
 
-Five agents run inside the scheduled GitHub Actions pipeline:
+Six agents run inside the scheduled GitHub Actions pipeline:
 
 * **Trieur** — pre-screens titles/abstracts against I1–I5/E1–E8 (suggestions only);
 * **Lecteur** — reads an extracted full text and writes a structured reading sheet;
 * **Synthèse** — compares the sheets and drafts state-of-the-art material;
 * **Veilleur** — summarises the collected AI-security news in simple French;
-* **Traducteur** — writes the French title and abstract shown next to the English.
+* **Traducteur** — writes the French title and abstract shown next to the English;
+* **Analyste** — explains each major cyber incident: what happened, how the
+  attackers proceeded, the consequences and how to protect against it.
 
 Two interchangeable backends implement the same ``Runner`` protocol:
 
@@ -34,12 +36,14 @@ import urllib.request
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from string import Template
 from typing import Any, Protocol
 
 from pfe_hla.fulltext import load_extracted_pages, verify_evidence_in_pages
 from pfe_hla.library import paper_key, utc_now
+from pfe_hla.news import event_roots, fetch_article_text
 from pfe_hla.reading import extracted_text_path, mark_read, pending_reading
 from pfe_hla.screening import TITLE_ABSTRACT_EXCLUSION_CODES
 
@@ -50,6 +54,7 @@ PROMPT_VERSIONS = {
     "synthesis": "synthesis-v1",
     "news": "news-v1",
     "translation": "translation-v1",
+    "incident": "incident-v1",
 }
 ACCESS_REGIMES = {"hard-label", "score-based", "white-box", "mixed", "not-applicable", "unknown"}
 CONTRIBUTION_TYPES = {"attack", "defense", "benchmark", "survey", "analysis", "other"}
@@ -371,6 +376,7 @@ class AgentPlan:
     max_news: int = 30
     max_translate: int = 48
     translate_batch: int = 12
+    max_incidents: int = 6
     screen_turns: int = 8
     read_turns: int = 30
     synthesis_turns: int = 15
@@ -384,6 +390,7 @@ class AgentSummary:
     synthesis: bool = False
     news: int = 0
     translated: int = 0
+    incidents: int = 0
     errors: list[str] = field(default_factory=list)
     skipped: str = ""
 
@@ -394,6 +401,7 @@ class AgentSummary:
             "synthesis": self.synthesis,
             "news": self.news,
             "translated": self.translated,
+            "incidents": self.incidents,
             "errors": self.errors,
             "skipped": self.skipped,
         }
@@ -878,6 +886,156 @@ def run_news_summaries(
     return written, []
 
 
+# ─── Analyste : how a major cyber incident happened and how to prevent it ───
+
+
+MAX_ARTICLES_PER_INCIDENT = 3
+INCIDENT_TEXT_CHARS = 6000
+MAX_INCIDENT_REFRESHES = 2
+SEVERITY_RANK = {"alert": 0, "notable": 1, "info": 2}
+
+
+@dataclass(slots=True)
+class IncidentEvent:
+    root: int
+    articles: list[sqlite3.Row]
+    refresh: int = 0
+
+
+def incident_candidates(connection: sqlite3.Connection, *, limit: int) -> list[IncidentEvent]:
+    """Events to explain: new ones first, then developing stories (new articles since).
+
+    An event is explained from up to three of its articles (the most severe and
+    the latest ones). Its report is refreshed, at most twice and once a day,
+    when at least two new articles arrive after it.
+    """
+
+    roots = event_roots(connection)
+    members: dict[int, list[sqlite3.Row]] = {}
+    for row in connection.execute(
+        """
+        SELECT * FROM news_items
+        WHERE kind IN ('cyber', 'incident') AND collected_at >= datetime('now', '-14 days')
+        ORDER BY id
+        """
+    ):
+        members.setdefault(roots.get(int(row["id"]), int(row["id"])), []).append(row)
+    reports = {
+        int(row["news_id"]): row
+        for row in connection.execute(
+            "SELECT news_id, report_json, created_at FROM incident_reports"
+        )
+    }
+    fresh, developing = [], []
+    for root, rows in members.items():
+        if not any(row["severity"] in {"alert", "notable"} for row in rows):
+            continue
+        ranked = sorted(
+            rows, key=lambda row: (SEVERITY_RANK.get(row["severity"], 3), -row["score"])
+        )
+        latest = sorted(rows, key=lambda row: -int(row["id"]))
+        chosen = list(dict.fromkeys([ranked[0], *latest]))[:MAX_ARTICLES_PER_INCIDENT]
+        report = reports.get(root)
+        if report is None:
+            fresh.append((ranked[0], IncidentEvent(root, chosen)))
+            continue
+        refreshes = int(json.loads(report["report_json"]).get("_refreshes", 0))
+        newer = [row for row in rows if row["collected_at"] > report["created_at"]]
+        stale = report["created_at"] < (
+            datetime.now(UTC) - timedelta(hours=20)
+        ).replace(microsecond=0).isoformat()
+        if refreshes < MAX_INCIDENT_REFRESHES and len(newer) >= 2 and stale:
+            developing.append((ranked[0], IncidentEvent(root, chosen, refreshes + 1)))
+    order = lambda pair: (SEVERITY_RANK.get(pair[0]["severity"], 3), -pair[0]["score"])  # noqa: E731
+    queue = sorted(fresh, key=order) + sorted(developing, key=order)
+    return [event for _row, event in queue[:limit]]
+
+
+def run_incident_reports(
+    connection: sqlite3.Connection,
+    runner: Runner,
+    workdir: Path,
+    plan: AgentPlan,
+    *,
+    fetch_text: Callable[..., str] = fetch_article_text,
+) -> tuple[int, list[str]]:
+    written, errors = 0, []
+    schema = load_schema("incident")
+    incident_dir = workdir / "incident"
+    for event in incident_candidates(connection, limit=plan.max_incidents):
+        incident_dir.mkdir(parents=True, exist_ok=True)
+        articles, characters = [], 0
+        for row in event.articles:
+            text = fetch_text(row["url"], source=row["source"]) if row["url"] else ""
+            characters += len(text)
+            articles.append(
+                {
+                    "titre": row["title"],
+                    "source": row["source"],
+                    "date": row["published_at"] or row["collected_at"],
+                    "resume": row["summary"],
+                    "texte": text[:INCIDENT_TEXT_CHARS]
+                    or "(article complet indisponible : seul le résumé est connu)",
+                }
+            )
+        (incident_dir / "incident.json").write_text(
+            json.dumps({"articles": articles}, ensure_ascii=False, indent=1), encoding="utf-8"
+        )
+        started = utc_now()
+        target = f"event #{event.root}"
+        if event.refresh:
+            target += f" (mise à jour {event.refresh})"
+        try:
+            result = runner.run(
+                prompt=load_prompt("incident", incident_file="incident.json"),
+                schema=schema,
+                cwd=incident_dir,
+                max_turns=plan.screen_turns,
+                timeout=plan.timeout,
+            )
+        except AgentError as exc:
+            errors.append(f"incident {target}: {exc}")
+            log_agent_run(
+                connection, task="incident", target=target, status="error",
+                started_at=started, detail=str(exc),
+            )
+            connection.commit()
+            continue
+        report = {**result.output, "_refreshes": event.refresh, "_articles": len(articles)}
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO incident_reports(
+                news_id, report_json, source_chars, model, prompt_version, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event.root,
+                json.dumps(report, ensure_ascii=False),
+                characters,
+                result.model,
+                PROMPT_VERSIONS["incident"],
+                utc_now(),
+            ),
+        )
+        title_fr = str(report.get("titre_fr") or "").strip()
+        if title_fr:
+            connection.execute(
+                "UPDATE news_items SET title_fr=? WHERE id=? AND title_fr=''",
+                (title_fr[:300], event.articles[0]["id"]),
+            )
+        log_agent_run(
+            connection, task="incident", target=target, status="ok", started_at=started,
+            result=result,
+            detail=(
+                f"{len(articles)} article(s), {characters} caractères · "
+                f"{event.articles[0]['title'][:70]}"
+            ),
+        )
+        connection.commit()
+        written += 1
+    return written, errors
+
+
 # ─── Traducteur : French title and abstract next to the English ─────────────
 
 
@@ -1058,7 +1216,7 @@ def run_agents(
     workdir: Path,
     plan: AgentPlan,
 ) -> AgentSummary:
-    """Run Trieur, Lecteur, Synthèse, Veilleur and Traducteur, committing after every task."""
+    """Run Trieur, Lecteur, Synthèse, Veilleur, Traducteur and Analyste, committing each task."""
 
     if workdir.exists():
         shutil.rmtree(workdir)
@@ -1079,6 +1237,9 @@ def run_agents(
         summary.errors.extend(errors)
     if plan.max_translate > 0:
         summary.translated, errors = run_translations(connection, light_runner, workdir, plan)
+        summary.errors.extend(errors)
+    if plan.max_incidents > 0:
+        summary.incidents, errors = run_incident_reports(connection, runner, workdir, plan)
         summary.errors.extend(errors)
     return summary
 

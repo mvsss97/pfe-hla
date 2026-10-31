@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pfe_hla.library import paper_key, utc_now
-from pfe_hla.news import recent_news
+from pfe_hla.news import incident_reports, recent_news
 from pfe_hla.prisma import compute_prisma_counts
 from pfe_hla.protocol import active_protocol
 from pfe_hla.reading import resolve_pdf_url
@@ -18,7 +18,9 @@ BOT_QUEUE_LIMIT = 40
 BOT_SHEETS_LIMIT = 15
 BOT_ABSTRACT_CHARS = 600
 BOT_NEWS_LIMIT = 30
-SITE_NEWS_LIMIT = 200
+SITE_NEWS_LIMIT = 300
+INCIDENTS_LIMIT = 20
+SEVERITY_ORDER = {"alert": 0, "notable": 1, "info": 2}
 
 
 def _json_list(raw: str) -> list[str]:
@@ -416,13 +418,58 @@ def build_sheets_state(connection: sqlite3.Connection) -> dict:
 
 
 def build_news_state(connection: sqlite3.Connection) -> dict:
-    """AI-security watch for the Actus page."""
+    """Security watch for the Actus page: articles grouped by event, analyst reports."""
 
     items = recent_news(connection, limit=SITE_NEWS_LIMIT)
+    reports = incident_reports(connection)
+    sizes: dict[int, int] = {}
+    for item in items:
+        sizes[item["event"]] = sizes.get(item["event"], 0) + 1
     counts: dict[str, int] = {}
     for item in items:
         counts[item["kind"]] = counts.get(item["kind"], 0) + 1
+        item["eventSize"] = sizes[item["event"]]
+        # The analyst explains an event (stored on its first article): all its articles share it.
+        item["report"] = reports.get(int(item["event"])) or reports.get(int(item["id"]))
     return {"generatedAt": utc_now(), "counts": counts, "items": items}
+
+
+def build_incidents_state(news_state: dict) -> dict:
+    """One entry per cyber incident (the bot's /cyber), with the analyst's explanation."""
+
+    events: dict[int, list[dict]] = {}
+    for item in news_state["items"]:
+        if item["kind"] in {"cyber", "incident"} and item["severity"] != "info":
+            events.setdefault(item["event"], []).append(item)
+    incidents = []
+    for members in events.values():
+        best = min(
+            members,
+            key=lambda item: (SEVERITY_ORDER.get(item["severity"], 3), -(item["score"] or 0)),
+        )
+        incidents.append(
+            {
+                "id": best["id"],
+                "event": best["event"],
+                "kind": best["kind"],
+                "source": best["source"],
+                "title": best["title"],
+                "titleFr": best["titleFr"],
+                "url": best["url"],
+                "summary": best["summary"][:400],
+                "severity": min((item["severity"] for item in members), key=SEVERITY_ORDER.get),
+                "at": max(item["publishedAt"] or item["collectedAt"] for item in members),
+                "articles": len(members),
+                "usd": best["extra"].get("usd"),
+                "tags": best["tags"],
+                "report": best["report"],
+            }
+        )
+    # Explained incidents first, newest first in each group.
+    incidents.sort(key=lambda item: item["at"], reverse=True)
+    with_report = [item for item in incidents if item["report"]]
+    without = [item for item in incidents if not item["report"]]
+    return {"generatedAt": utc_now(), "incidents": (with_report + without)[:INCIDENTS_LIMIT]}
 
 
 def build_reader_index(public_state: dict, sheets_state: dict) -> dict:
@@ -471,9 +518,25 @@ def _bot_supervisor(public_state: dict) -> dict:
 
 
 def _bot_news(news_state: dict) -> list[dict]:
+    # One line per event, shown by its most severe article (the newest among equals).
+    best: dict[int, dict] = {}
+    for item in news_state["items"]:
+        current = best.get(item["event"])
+        if current is None or SEVERITY_ORDER.get(item["severity"], 3) < SEVERITY_ORDER.get(
+            current["severity"], 3
+        ):
+            best[item["event"]] = item
+    seen: set[int] = set()
+    items = []
+    for item in news_state["items"]:
+        if item["event"] in seen:
+            continue
+        seen.add(item["event"])
+        items.append(best[item["event"]])
     return [
         {
             "key": item["key"],
+            "id": item["id"],
             "kind": item["kind"],
             "source": item["source"],
             "title": item["title"][:200],
@@ -486,8 +549,11 @@ def _bot_news(news_state: dict) -> list[dict]:
             "collectedAt": item["collectedAt"],
             "stars": item["extra"].get("stars"),
             "cvss": item["extra"].get("cvss"),
+            "usd": item["extra"].get("usd"),
+            "articles": item["eventSize"],
+            "report": item["report"] is not None,
         }
-        for item in news_state["items"][:BOT_NEWS_LIMIT]
+        for item in items[:BOT_NEWS_LIMIT]
     ]
 
 
@@ -648,6 +714,7 @@ def export_public_state(
     _write_json(path, public_state)
     _write_json(path.with_name("sheets.json"), sheets_state)
     _write_json(path.with_name("news.json"), news_state)
+    _write_json(path.with_name("incidents.json"), build_incidents_state(news_state), indent=None)
     _write_json(
         path.with_name("reader.json"), build_reader_index(public_state, sheets_state), indent=None
     )

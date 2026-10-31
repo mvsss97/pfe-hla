@@ -38,6 +38,7 @@ site/data/sheets.json
 site/data/bot.json
 site/data/news.json
 site/data/reader.json
+site/data/incidents.json
 data/telegram-ack.json
 agents/work/
 worker/node_modules/

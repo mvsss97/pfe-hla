@@ -10,15 +10,26 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from pfe_hla.agents import AgentPlan, AgentResult, run_news_summaries, run_translations
+from pfe_hla.agents import (
+    AgentPlan,
+    AgentResult,
+    run_incident_reports,
+    run_news_summaries,
+    run_translations,
+)
 from pfe_hla.db import SCHEMA_VERSION, connect, init_database
 from pfe_hla.export import export_public_state
 from pfe_hla.library import PaperRecord, seed_library
 from pfe_hla.news import (
     NewsItem,
     collect_news,
+    event_key,
+    event_roots,
     fresh_alerts,
+    incident_scale,
+    lead_actor,
     parse_aiid,
+    parse_cyber_feed,
     parse_github_advisories,
     parse_github_repos,
     parse_kev,
@@ -284,7 +295,10 @@ class NewsStorageTests(DatabaseCase):
             ],
         )
         alerts = fresh_alerts(self.connection)
-        self.assertEqual([alert["key"] for alert in alerts], ["ghsa:GHSA-new"])
+        first = self.connection.execute(
+            "SELECT id FROM news_items WHERE external_id='GHSA-new'"
+        ).fetchone()["id"]
+        self.assertEqual([alert["key"] for alert in alerts], [f"event:{first}"])
         self.assertEqual(
             fresh_alerts(self.connection), alerts, "reading alerts never consumes them"
         )
@@ -445,3 +459,139 @@ class TranslationAndExportTests(DatabaseCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CyberIncidentTests(DatabaseCase):
+    def test_major_attacks_of_any_sector_are_kept_and_graded(self) -> None:
+        feed = rss(
+            (
+                "Binance hit by $6.3B hack, the largest in crypto history",
+                "Hackers drained wallets.",
+            ),
+            ("Florida data breach affects 4.9 million people", "Social Security numbers leaked."),
+            (
+                "Syrian hacker behind $136 billion market drop gets 42 months in prison",
+                "Sentenced.",
+            ),
+            ("Patch Tuesday fixes 60 bugs", "Monthly updates."),
+            ("Weekly webinar: hackers and you", "Join us."),
+        )
+        items = {item.title[:20]: item for item in parse_security_feed("thehackernews", feed)}
+        self.assertEqual(items["Binance hit by $6.3B"].kind, "cyber")
+        self.assertEqual(items["Binance hit by $6.3B"].severity, "alert")
+        self.assertIn("crypto", items["Binance hit by $6.3B"].tags)
+        self.assertEqual(items["Florida data breach "].severity, "notable")
+        self.assertEqual(
+            items["Syrian hacker behind"].severity, "notable", "court news is no alert"
+        )
+        self.assertNotIn("Patch Tuesday fixes ", items)
+        self.assertNotIn("Weekly webinar: hack", items)
+        self.assertEqual(incident_scale("$1.5 billion stolen from 2,000,000 users"), (1.5e9, 2e6))
+        rekt = parse_cyber_feed("rekt", rss(("Protocol X - REKT", "Funds gone.")))
+        self.assertEqual([item.kind for item in rekt], ["cyber"])
+
+    def store_event(self) -> list[int]:
+        def item(external_id: str, title: str, usd: float | None) -> NewsItem:
+            extra = {"usd": usd, "event": event_key(usd or 0, 0)}
+            return NewsItem(
+                source="thehackernews",
+                kind="cyber",
+                external_id=external_id,
+                title=title,
+                url=f"https://news.example/{external_id}",
+                severity="alert" if usd else "info",
+                score=5.0 if usd else 1.0,
+                published_at=NOW.isoformat(),
+                extra=extra,
+            )
+
+        store_items(
+            self.connection,
+            [
+                item("a", "Binance probes potential $5.8 billion crypto-theft hack", 5.8e9),
+                item("b", "Binance hit by $6.3B hack, the largest in crypto history", 6.3e9),
+                item("c", "THORChain's RUNE jumps after Binance's record $6.3B hack", 6.3e9),
+                item("d", "Bitcoin held up after the hack, analysts say", None),
+                item("e", "Drift exploiter sends $61M to Tornado Cash", 6.1e7),
+            ],
+        )
+        self.connection.commit()
+        return [
+            row["id"] for row in self.connection.execute("SELECT id FROM news_items ORDER BY id")
+        ]
+
+    def test_articles_of_one_attack_form_one_event_and_one_alert(self) -> None:
+        ids = self.store_event()
+        roots = event_roots(self.connection)
+        self.assertEqual({roots[i] for i in ids[:3]}, {ids[0]}, "same actor, then same figure")
+        self.assertEqual(roots[ids[4]], ids[4], "another attack")
+        self.assertEqual(lead_actor("As it happened: Binance’s record hack"), "binance")
+        self.assertEqual(lead_actor("Hackers Exploit Critical Flaw"), "")
+        keys = [alert["key"] for alert in fresh_alerts(self.connection)]
+        self.assertEqual(sorted(keys), sorted([f"event:{ids[0]}", f"event:{ids[4]}"]))
+        self.assertNotEqual(roots[ids[3]], ids[0], "a generic market story is not merged")
+
+    def test_analyst_explains_each_event_from_several_articles(self) -> None:
+        ids = self.store_event()
+        seen: list[dict] = []
+
+        class Analyst:
+            def run(self, *, prompt, schema, cwd, max_turns, timeout):
+                payload = json.loads((cwd / "incident.json").read_text(encoding="utf-8"))
+                seen.append(payload)
+                return AgentResult(
+                    {
+                        "titre_fr": "Titre FR",
+                        "resume_en": "Short.",
+                        "resume_fr": "Résumé.",
+                        "victime": "Binance",
+                        "attaquants": "non précisé dans l'article",
+                        "methode": ["Étape 1."],
+                        "impact": "Pertes.",
+                        "defense": ["MFA."],
+                        "lien_ia": "",
+                        "fiabilite": "confirmé",
+                        "termes": [{"en": "hot wallet", "fr": "portefeuille chaud"}],
+                    },
+                    model="fake-analyst",
+                )
+
+        def fetch(url: str, *, source: str = "") -> str:
+            return f"Full text of {url}"
+
+        plan = AgentPlan(max_incidents=5)
+        written, errors = run_incident_reports(
+            self.connection, Analyst(), self.root / "work", plan, fetch_text=fetch
+        )
+        self.assertEqual((written, errors), (2, []), "one report per event, not per article")
+        binance = next(payload for payload in seen if "Binance" in payload["articles"][0]["titre"])
+        self.assertEqual(len(binance["articles"]), 3)
+        self.assertIn("Full text of", binance["articles"][0]["texte"])
+        self.assertEqual(
+            run_incident_reports(
+                self.connection, Analyst(), self.root / "work", plan, fetch_text=fetch
+            )[0],
+            0,
+            "nothing new: no second report",
+        )
+        output = self.root / "site" / "state.json"
+        export_public_state(self.connection, output, site_url="https://site.invalid")
+        incidents = json.loads(output.with_name("incidents.json").read_text(encoding="utf-8"))
+        first = next(item for item in incidents["incidents"] if item["event"] == ids[0])
+        self.assertEqual(first["articles"], 3)
+        self.assertEqual(first["report"]["victime"], "Binance")
+        bot = json.loads(output.with_name("bot.json").read_text(encoding="utf-8"))
+        binance_line = next(item for item in bot["securityNews"] if item["articles"] == 3)
+        self.assertEqual(
+            binance_line["severity"], "alert", "the event shows its most severe article"
+        )
+        self.assertTrue(binance_line["report"])
+        self.assertIn(
+            ids[0],
+            {
+                item["event"]
+                for item in json.loads(output.with_name("news.json").read_text(encoding="utf-8"))[
+                    "items"
+                ]
+            },
+        )

@@ -547,6 +547,7 @@ def command_agents(args: argparse.Namespace) -> int:
             synthesis=not args.no_synthesis,
             max_news=args.max_news,
             max_translate=args.max_translate,
+            max_incidents=args.max_incidents,
         )
         summary = run_agents(connection, runner, workdir=ROOT / args.workdir, plan=plan)
         connection.commit()
@@ -967,6 +968,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=48,
         help="papers whose title/abstract get a French version (0 = none)",
+    )
+    agents.add_argument(
+        "--max-incidents",
+        type=int,
+        default=6,
+        help="major cyber incidents explained: what, how, defence (0 = none)",
     )
     agents.add_argument(
         "--model",

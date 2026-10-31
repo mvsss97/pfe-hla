@@ -2266,3 +2266,14 @@ kbd {
 .fr-details p {
   margin: .4rem 0 0;
 }
+
+/* v3.2 · cyber incidents explained */
+.incident-report h4 {
+  margin: .8rem 0 .3rem;
+}
+
+.incident-report ol,
+.incident-report ul {
+  margin: 0;
+  padding-left: 1.2rem;
+}

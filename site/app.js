@@ -1655,12 +1655,47 @@
     }
   }
 
-  const NEWS_KINDS = { vulnerability: "🔓 Faille", repo: "🧪 Dépôt", incident: "⚠️ Incident IA", article: "📰 Presse", paper: "📄 Recherche" };
+  const NEWS_KINDS = { cyber: "💥 Cyberattaque", vulnerability: "🔓 Faille", repo: "🧪 Dépôt", incident: "⚠️ Incident IA", article: "📰 Presse", paper: "📄 Recherche" };
   const NEWS_SOURCES = {
     github: "GitHub", gitlab: "GitLab", ghsa: "GitHub Advisory", nvd: "NVD (NIST)", kev: "CISA KEV (exploitée)",
     thehackernews: "The Hacker News", bleepingcomputer: "BleepingComputer", securityweek: "SecurityWeek",
-    aiid: "AI Incident Database", arxiv: "arXiv cs.CR",
+    aiid: "AI Incident Database", arxiv: "arXiv cs.CR", krebsonsecurity: "Krebs on Security",
+    therecord: "The Record", databreaches: "DataBreaches.net", rekt: "rekt.news", cointelegraph: "Cointelegraph",
   };
+
+  function formatUsd(value) {
+    const amount = Number(value) || 0;
+    if (amount >= 1e9) return `${(amount / 1e9).toFixed(1).replace(".", ",")} Md$`;
+    if (amount >= 1e6) return `${Math.round(amount / 1e6)} M$`;
+    return "";
+  }
+
+  // The analyst's explanation: what happened, how, consequences, defence.
+  function incidentReport(report) {
+    const box = element("details", "fr-details incident-report");
+    box.append(element("summary", "", "🔎 Comment ont-ils fait ? Comment s’en protéger ?"));
+    if (report.resume_en) box.append(element("p", "", `🇬🇧 ${report.resume_en}`));
+    box.append(element("p", "", `🇫🇷 ${report.resume_fr || ""}`));
+    const facts = element("dl", "kv-grid");
+    for (const [label, value] of [["Victime", report.victime], ["Attaquants", report.attaquants], ["Fiabilité", report.fiabilite], ["Conséquences", report.impact]]) {
+      const row = element("div");
+      row.append(element("dt", "", label), element("dd", "", value || "—"));
+      facts.append(row);
+    }
+    box.append(facts, element("h4", "", "🛠 Comment ils ont procédé"));
+    const steps = element("ol");
+    (report.methode || []).forEach((step) => steps.append(element("li", "", step)));
+    box.append(steps, element("h4", "", "🛡 Comment s’en protéger"));
+    const defence = element("ul");
+    (report.defense || []).forEach((item) => defence.append(element("li", "", item)));
+    box.append(defence);
+    if (report.lien_ia) box.append(element("p", "", `🤖 Lien avec l’IA : ${report.lien_ia}`));
+    if ((report.termes || []).length) {
+      box.append(element("p", "fr-line", `🇬🇧 Mots : ${report.termes.map((term) => `${term.en} = ${term.fr}`).join(" · ")}`));
+    }
+    box.append(element("p", "microcopy", `Brouillon IA (${report.model || "Gemini"}) écrit à partir de l’article : vérifie les faits avant de les citer.`));
+    return box;
+  }
   const SEVERITY_LABELS = { alert: ["🚨 Alerte", "danger"], notable: ["🔸 Important", "amber"], info: ["▫️ Info", "neutral"] };
 
   function renderNews() {
@@ -1671,12 +1706,22 @@
     const severity = $("#news-severity")?.value || "all";
     grid.replaceChildren();
     let visible = 0;
+    const shownEvents = new Set();
     newsState.forEach((item) => {
       if (kind !== "all" && item.kind !== kind) return;
       if (severity === "alert" && item.severity !== "alert") return;
       if (severity === "notable" && item.severity === "info") return;
       const tags = Array.isArray(item.tags) ? item.tags : [];
       if (query && !normalizeText(`${item.title} ${item.titleFr || ""} ${item.summary} ${item.source} ${tags.join(" ")}`).includes(query)) return;
+      // One card per event, shown by its most severe article (with the event's explanation).
+      if (item.event && item.eventSize > 1) {
+        if (shownEvents.has(item.event)) return;
+        shownEvents.add(item.event);
+        const rank = { alert: 0, notable: 1, info: 2 };
+        item = newsState
+          .filter((candidate) => candidate.event === item.event)
+          .reduce((best, candidate) => ((rank[candidate.severity] ?? 3) < (rank[best.severity] ?? 3) ? candidate : best), item);
+      }
       visible += 1;
       const [severityLabel, severityKind] = SEVERITY_LABELS[item.severity] || SEVERITY_LABELS.info;
       const card = element("article", `paper-card${item.severity === "alert" ? " priority" : ""}`);
@@ -1686,6 +1731,8 @@
       const tagRow = element("div", "tag-row");
       const extra = item.extra && typeof item.extra === "object" ? item.extra : {};
       if (extra.stars) tagRow.append(element("span", "", `⭐ ${extra.stars}`));
+      if (formatUsd(extra.usd)) tagRow.append(element("span", "", `💸 ${formatUsd(extra.usd)}`));
+      if (item.eventSize > 1) tagRow.append(element("span", "", `${item.eventSize} articles sur cet événement`));
       if (extra.cvss) tagRow.append(element("span", "", `CVSS ${extra.cvss}`));
       tags.slice(0, 5).forEach((tag) => tagRow.append(element("span", "", tag)));
       if (!item.summaryFr) tagRow.append(element("span", "", "résumé en anglais"));
@@ -1706,6 +1753,7 @@
         english.append(element("summary", "", "🇬🇧 Texte original"), element("p", "", String(item.summaryEn).slice(0, 700)));
         card.append(english);
       }
+      if (item.report) card.append(incidentReport(item.report));
       card.append(tagRow, actions);
       grid.append(card);
     });

@@ -1,9 +1,14 @@
-"""AI-security news watch: repositories, vulnerabilities, incidents, articles, papers.
+"""Security news watch: AI security first, plus the major cyber incidents.
+
+Kinds: ``repo``, ``vulnerability``, ``incident`` (AI incidents), ``article``
+(AI-security press), ``paper`` and ``cyber`` (any major attack: exchange
+hacks, breaches, ransomware, supply-chain attacks, exploited zero-days…).
 
 Every source is free and fail-soft: one failing feed never stops the others.
 Items are deduplicated by ``(source, external_id)`` and scored with simple,
-explainable keyword rules. ``alert`` is reserved for exploited or high-severity
-flaws touching AI software, so Telegram alerts stay rare and meaningful.
+explainable keyword rules. ``alert`` is reserved for exploited or critical
+flaws touching AI software and for very large attacks (≥ $50M stolen or
+≥ 10M people affected), so Telegram alerts stay rare and meaningful.
 """
 
 from __future__ import annotations
@@ -71,6 +76,51 @@ RSS_FEEDS = {
     "bleepingcomputer": "https://www.bleepingcomputer.com/feed/",
     "securityweek": "https://www.securityweek.com/feed/",
 }
+# Major cyber incidents (any sector), including crypto-exchange and DeFi hacks.
+CYBER_FEEDS = {
+    "krebsonsecurity": "https://krebsonsecurity.com/feed/",
+    "therecord": "https://therecord.media/feed",
+    "databreaches": "https://databreaches.net/feed/",
+    "rekt": "https://rekt.news/rss/feed.xml",
+    "cointelegraph": "https://cointelegraph.com/rss/tag/hacks",
+}
+INCIDENT_PATTERN = re.compile(
+    r"\b(hack(ed|ers?|s)?|breach(ed|es)?|stole|stolen|theft|heist|drain(ed|er)?|exploit(ed|s)?|"
+    r"ransomware|extortion|leak(ed|s)?|compromis(e|ed)|attack(ed|s)?|scam|phish(ing)?|backdoor(ed)?|"
+    r"zero-day|0-day|malware|wiper|ddos|exposed|intrusion|cyberattack|spyware|botnet)\b",
+    re.IGNORECASE,
+)
+NOT_AN_EVENT = re.compile(
+    r"\b(webinar|deal|deals|sponsored|how to|tips|review|podcast|week in review)\b", re.I
+)
+CRYPTO_TERMS = (
+    "crypto", "bitcoin", "ethereum", "exchange", "defi", "wallet", "token", "blockchain", "binance",
+    "bybit", "coinbase", "kraken", "solana", "stablecoin", "bridge", "web3",
+)
+CATEGORY_RULES = (
+    ("rançongiciel", re.compile(r"ransomware|extortion", re.I)),
+    ("fuite de données", re.compile(r"breach|leak|exposed|stolen data|data theft|records", re.I)),
+    ("chaîne d'approvisionnement", re.compile(r"supply[- ]chain|npm|pypi|dependenc|package", re.I)),
+    ("zero-day", re.compile(r"zero-day|0-day|actively exploited|exploited in the wild", re.I)),
+    ("hameçonnage", re.compile(r"phish|social engineering|impersonat", re.I)),
+    (
+        "espionnage",
+        re.compile(r"espionage|state-sponsored|apt\d*|nation-state|lazarus|north korea", re.I),
+    ),
+    ("DDoS", re.compile(r"\bddos\b|denial[- ]of[- ]service", re.I)),
+)
+MONEY_PATTERN = re.compile(r"\$\s?(\d+(?:[.,]\d+)?)\s?(billion|million|bn|b|m)\b", re.I)
+PEOPLE_PATTERN = re.compile(
+    r"(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s?(billion|million)?\s+(?:\w+\s+){0,2}"
+    r"(users|customers|records|accounts|people|patients|individuals|members|clients)",
+    re.I,
+)
+# Court or police news about an old attack is notable, never an alert.
+JUSTICE_PATTERN = re.compile(
+    r"sentenced|prison|jail|arrested|extradit|charged|pleads? guilty|indicted"
+    r"|gets \d+ (?:month|year)",
+    re.I,
+)
 AIID_FEED = "https://incidentdatabase.ai/rss.xml"
 KEV_FEED = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 NVD_KEYWORDS = ("large language model", "prompt injection", "machine learning")
@@ -307,6 +357,9 @@ def parse_kev(payload: dict, *, since: datetime) -> list[NewsItem]:
     return items
 
 
+CONTENT_NS = "{http://purl.org/rss/1.0/modules/content/}encoded"
+
+
 def _rss_items(xml_bytes: bytes) -> list[dict[str, str]]:
     root = ET.fromstring(xml_bytes)  # noqa: S314 - trusted, well-known feeds
     items = []
@@ -316,6 +369,7 @@ def _rss_items(xml_bytes: bytes) -> list[dict[str, str]]:
                 "title": (item.findtext("title") or "").strip(),
                 "link": (item.findtext("link") or "").strip(),
                 "description": item.findtext("description") or "",
+                "content": item.findtext(CONTENT_NS) or "",
                 "guid": (item.findtext("guid") or item.findtext("link") or "").strip(),
                 "pubDate": item.findtext("pubDate") or "",
             }
@@ -323,11 +377,91 @@ def _rss_items(xml_bytes: bytes) -> list[dict[str, str]]:
     return items
 
 
+def _amount(match: re.Match[str]) -> float:
+    value = float(match.group(1).replace(",", "."))
+    unit = (match.group(2) or "").lower()
+    if unit in {"billion", "bn", "b"}:
+        return value * 1e9
+    if unit in {"million", "m"}:
+        return value * 1e6
+    return value
+
+
+def incident_scale(text: str) -> tuple[float, float]:
+    """Largest dollar amount and largest number of people mentioned."""
+
+    money = max((_amount(match) for match in MONEY_PATTERN.finditer(text)), default=0.0)
+    people = 0.0
+    for match in PEOPLE_PATTERN.finditer(text):
+        raw = match.group(1).replace(",", "")
+        if not raw.replace(".", "").isdigit():
+            continue
+        value = float(raw) * {"billion": 1e9, "million": 1e6}.get((match.group(2) or "").lower(), 1)
+        people = max(people, value)
+    return money, people
+
+
+def incident_categories(text: str) -> list[str]:
+    tags = [name for name, pattern in CATEGORY_RULES if pattern.search(text)]
+    if any(term in text.lower() for term in CRYPTO_TERMS):
+        tags.insert(0, "crypto")
+    return tags
+
+
+def cyber_item(
+    name: str, item: dict[str, str], *, always_incident: bool = False
+) -> NewsItem | None:
+    """A major attack of any sector, graded by its scale."""
+
+    text = f"{item['title']} {_clean(item['description'], 1500)}"
+    if NOT_AN_EVENT.search(item["title"]):
+        return None
+    if not always_incident and not INCIDENT_PATTERN.search(text):
+        return None
+    money, people = incident_scale(text)
+    if (money >= 50e6 or people >= 10e6) and not JUSTICE_PATTERN.search(item["title"]):
+        severity, score = "alert", 5.0
+    elif money >= 1e6 or people >= 1e5 or re.search(
+        r"ransomware|breach|hacked|stolen|heist|drained|actively exploited|zero-day", text, re.I
+    ):
+        severity, score = "notable", 3.0
+    else:
+        severity, score = "info", 1.0
+    return NewsItem(
+        source=name,
+        kind="cyber",
+        external_id=item["guid"] or item["link"],
+        title=item["title"],
+        url=item["link"],
+        summary=_clean(item["description"], 400),
+        published_at=_iso(item["pubDate"]),
+        severity=severity,
+        score=score + min(money / 1e9, 2.0),
+        tags=["cyberattaque", *incident_categories(text)][:6],
+        extra={"usd": money or None, "people": people or None, "event": event_key(money, people)},
+    )
+
+
+def event_key(money: float, people: float) -> str:
+    """Articles about the same attack share its headline figure (2 significant digits)."""
+
+    if money >= 1e6:
+        return f"usd:{float(f'{money:.2g}'):.3g}"
+    if people >= 1e5:
+        return f"people:{float(f'{people:.2g}'):.3g}"
+    return ""
+
+
 def parse_security_feed(name: str, xml_bytes: bytes) -> list[NewsItem]:
+    """AI-security articles, and every other major incident as ``cyber``."""
+
     items = []
     for item in _rss_items(xml_bytes):
         text = f"{item['title']} {_clean(item['description'])}"
         if not mentions_ai(text):
+            incident = cyber_item(name, item)
+            if incident is not None:
+                items.append(incident)
             continue
         security = mentions_security(text)
         items.append(
@@ -344,6 +478,17 @@ def parse_security_feed(name: str, xml_bytes: bytes) -> list[NewsItem]:
                 tags=["article", name],
             )
         )
+    return items
+
+
+def parse_cyber_feed(name: str, xml_bytes: bytes) -> list[NewsItem]:
+    """Incident-focused feeds (rekt.news, crypto hacks): every story is an incident."""
+
+    items = []
+    for item in _rss_items(xml_bytes):
+        incident = cyber_item(name, item, always_incident=name == "rekt")
+        if incident is not None:
+            items.append(incident)
     return items
 
 
@@ -468,6 +613,62 @@ def fetch_feeds() -> list[NewsItem]:
     return items
 
 
+def fetch_cyber_feeds() -> list[NewsItem]:
+    items: list[NewsItem] = []
+    for name, url in CYBER_FEEDS.items():
+        try:
+            items.extend(parse_cyber_feed(name, _get(url)))
+        except (OSError, ET.ParseError, urllib.error.URLError):
+            continue
+    return items
+
+
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130 Safari/537.36"
+}
+
+
+def _paragraph_text(html: str, limit: int) -> str:
+    """Paragraphs of the article body (the <article> element when the page has one)."""
+
+    match = re.search(r"<article\b.*?</article>", html, re.S | re.I)
+    if match:
+        inner = re.findall(r"<p[^>]*>(.*?)</p>", match.group(0), re.S | re.I)
+        text = _clean(" ".join(inner), limit)
+        if len(text) > 500:
+            return text
+    paragraphs = re.findall(r"<p[^>]*>(.*?)</p>", html, re.S | re.I)
+    return _clean(" ".join(paragraphs), limit)
+
+
+def fetch_article_text(url: str, *, source: str = "", limit: int = 14000) -> str:
+    """Full text of a news article: the page itself, else the feed's full content."""
+
+    text = ""
+    try:
+        html = urllib.request.urlopen(  # noqa: S310
+            urllib.request.Request(url, headers=BROWSER_HEADERS), timeout=30,
+            context=_verified_ssl_context(),
+        ).read().decode("utf-8", "replace")
+        text = _paragraph_text(html, limit)
+    except (OSError, urllib.error.URLError, ValueError):
+        text = ""
+    feed = CYBER_FEEDS.get(source) or RSS_FEEDS.get(source)
+    if len(text) < 800 and feed:
+        try:
+            for item in _rss_items(_get(feed)):
+                if url in {item["link"], item["guid"]}:
+                    body = item["content"] or item["description"]
+                    candidate = _paragraph_text(body, limit) or _clean(body, limit)
+                    if len(candidate) > len(text):
+                        text = candidate
+                    break
+        except (OSError, ET.ParseError, urllib.error.URLError):
+            pass
+    return text
+
+
 def fetch_aiid() -> list[NewsItem]:
     return parse_aiid(_get(AIID_FEED))
 
@@ -547,6 +748,7 @@ def collect_news(
         "nvd": lambda: fetch_nvd(since, now),
         "kev": lambda: fetch_kev(since),
         "articles": fetch_feeds,
+        "cyber": fetch_cyber_feeds,
         "aiid": fetch_aiid,
         "arxiv": fetch_arxiv_security,
     }
@@ -568,11 +770,13 @@ def recent_news(connection: sqlite3.Connection, *, limit: int = 150) -> list[dic
         LIMIT ?
         """,
         (limit,),
-    )
+    ).fetchall()
+    roots = cluster_events([_cluster_input(row) for row in rows])
     return [
         {
             "id": row["id"],
             "key": news_key(row),
+            "event": roots.get(int(row["id"]), int(row["id"])),
             "source": row["source"],
             "kind": row["kind"],
             "title": row["title"],
@@ -590,6 +794,20 @@ def recent_news(connection: sqlite3.Connection, *, limit: int = 150) -> list[dic
         }
         for row in rows
     ]
+
+
+def incident_reports(connection: sqlite3.Connection) -> dict[int, dict[str, Any]]:
+    """Analyst reports by news id (what happened, how, consequences, defence)."""
+
+    return {
+        int(row["news_id"]): {
+            **json.loads(row["report_json"]),
+            "model": row["model"],
+            "sourceChars": row["source_chars"],
+            "createdAt": row["created_at"],
+        }
+        for row in connection.execute("SELECT * FROM incident_reports")
+    }
 
 
 def news_key(row: sqlite3.Row | dict[str, Any]) -> str:
@@ -612,13 +830,26 @@ def fresh_alerts(
         """
         SELECT * FROM news_items
         WHERE severity='alert' AND COALESCE(NULLIF(published_at, ''), collected_at) >= ?
-        ORDER BY score DESC, id DESC LIMIT ?
+        ORDER BY score DESC, id DESC
         """,
-        (cutoff, limit),
+        (cutoff,),
     )
+    # One alert per attack: ten articles about the same hack share an event,
+    # and the worker remembers the event key, not the article.
+    roots = event_roots(connection)
+    selected, seen = [], set()
+    for row in rows:
+        root = roots.get(int(row["id"]))
+        key = f"event:{root}" if root else news_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append((key, row))
+        if len(selected) >= limit:
+            break
     return [
         {
-            "key": news_key(row),
+            "key": key,
             "source": row["source"],
             "kind": row["kind"],
             "title": row["title"],
@@ -629,5 +860,91 @@ def fresh_alerts(
             "publishedAt": row["published_at"],
             "tags": json.loads(row["tags_json"] or "[]"),
         }
-        for row in rows
+        for key, row in selected
     ]
+
+
+# Words that open many unrelated headlines: never an event's lead actor.
+GENERIC_LEADS = frozenset(
+    """a an as at the this that these those its it in on for from with after before over under
+    up down new top inside why how what when who week weekly daily update updates patch patches
+    warning warns alert report reports study survey experts researchers police europol fbi cisa
+    doj us uk eu north south korea korean chinese russian iranian state threat actors actor
+    campaign hackers hacker attackers attack attacks cyber cyberattack exploit exploits
+    exploited exploiter critical flaw flaws bug bugs vulnerability vulnerabilities ransomware
+    malware data breach breaches massive major million billion record security zero day phishing
+    scam scams google microsoft apple amazon meta secret service crypto bitcoin ethereum""".split()
+)
+CLUSTER_KINDS = ("cyber", "incident")
+CVE_PATTERN = re.compile(r"CVE-\d{4}-\d{4,}", re.I)
+
+
+def lead_actor(title: str) -> str:
+    """First capitalised, non-generic word of a headline ("Binance", "Drift"…)."""
+
+    for word in re.findall(r"[A-Za-z][\w.-]*", title.replace("\u2019", "'")):
+        clean = word.removesuffix("'s").strip(".-").lower()
+        if word[0].isupper() and len(clean) >= 3 and clean not in GENERIC_LEADS:
+            return clean
+    return ""
+
+
+def _event_keys(item: dict[str, Any]) -> tuple[set[str], str]:
+    """Shared keys (headline figure, CVE ids) and the lead-actor key of one item."""
+
+    extra = item.get("extra") or {}
+    text = f"{item['title']} {extra.get('cve') or ''}"
+    keys = {f"cve:{cve.upper()}" for cve in CVE_PATTERN.findall(text)}
+    if str(item.get("external_id", "")).upper().startswith("CVE-"):
+        keys.add(f"cve:{str(item['external_id']).upper()}")
+    if extra.get("event"):
+        keys.add(f"figure:{extra['event']}")
+    actor = lead_actor(item["title"]) if item.get("kind") in CLUSTER_KINDS else ""
+    return keys, (f"actor:{actor}" if actor else "")
+
+
+def cluster_events(items: list[dict[str, Any]]) -> dict[int, int]:
+    """Map each item id to the id of the first article of its event.
+
+    Items sharing a headline figure, a CVE id or the lead actor of the root
+    article belong to the same event; ids grow with time, so the root (and the
+    alert key built from it) stays stable from one pipeline run to the next.
+    """
+
+    clusters: list[tuple[int, set[str], str]] = []
+    roots: dict[int, int] = {}
+    for item in sorted(items, key=lambda value: value["id"]):
+        keys, actor = _event_keys(item)
+        match = next(
+            (
+                cluster
+                for cluster in clusters
+                if keys & cluster[1] or (actor and actor == cluster[2])
+            ),
+            None,
+        )
+        if match is None:
+            clusters.append((item["id"], set(keys), actor))
+            roots[item["id"]] = item["id"]
+        else:
+            match[1].update(keys)
+            roots[item["id"]] = match[0]
+    return roots
+
+
+def _cluster_input(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "kind": row["kind"],
+        "title": row["title"],
+        "external_id": row["external_id"],
+        "extra": json.loads(row["extra_json"] or "{}"),
+    }
+
+
+def event_roots(connection: sqlite3.Connection, *, days: int = 14) -> dict[int, int]:
+    rows = connection.execute(
+        "SELECT * FROM news_items WHERE collected_at >= ? ORDER BY id",
+        ((datetime.now(UTC) - timedelta(days=days)).replace(microsecond=0).isoformat(),),
+    )
+    return cluster_events([_cluster_input(row) for row in rows])

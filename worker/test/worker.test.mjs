@@ -274,7 +274,7 @@ test("vocabulary, lessons, quiz, writing steps and settings buttons", async () =
   assert.ok(reveal, "word card has a reveal button");
   const hash = reveal.callback_data.split(":")[2];
   for (const data of [
-    `w:s:${hash}`, `w:q:${hash}:4`, "l:n", "l:p", "l:m", "l:o:m3", "l:o:these", "l:o:hardlabel", "q:m1l1", "q:m1l1:0", "q:m1l2:2", "q:t1:0", "r:s:r3",
+    `w:s:${hash}`, `w:q:${hash}:4`, "l:n", "l:p", "l:m", "l:o:m3", "l:o:these", "l:o:hardlabel", "l:o:cyber", "q:c1:0", "q:m1l1", "q:m1l1:0", "q:m1l2:2", "q:t1:0", "r:s:r3",
     "set:morning", "set:english", "set:news", "set:alerts", "set:pause", "n:repo", "n:all", "n:bogus", "t:p1", "noop",
   ]) {
     calls.length = 0;
@@ -384,7 +384,7 @@ test("the 30-minute tick follows the daily schedule once per slot", async () => 
   calls.length = 0;
   await runTick(env, localTime(18, 0));
   const digest = sentTexts(calls)[0];
-  assert.match(digest, /Actus sécurité IA du jour<\/b> \(3\)/);
+  assert.match(digest, /Actus sécurité du jour<\/b> \(3\)/);
   assert.ok(digest.indexOf("LangChain") < digest.indexOf("llm-guard"), "alerts come first");
   assert.ok(digest.includes("&lt;script&gt;"), "titles are escaped");
   assert.ok(!digest.includes("javascript:"), "only http(s) links");
@@ -421,7 +421,8 @@ test("security alerts: immediate by day, held at night, never twice", async () =
 
   const day = await withNow(localTime(12, 0), () => pipeline(env, { light: true, sheets: [], alerts: [alert] }));
   assert.equal(day.alerted, true);
-  assert.match(sentTexts(calls)[0], /Alerte sécurité IA/);
+  assert.match(sentTexts(calls)[0], /Alerte sécurité/);
+  assert.match(sentTexts(calls)[0], /logiciel d'IA/);
   assert.match(sentTexts(calls)[0], /Critical flaw in vLLM/);
 
   calls.length = 0;
@@ -645,4 +646,73 @@ test("reader PDF proxy: library and open-access PDFs for everyone, other links f
   } finally {
     globalThis.fetch = siteFetch;
   }
+});
+
+// ─── Major cyber incidents explained ────────────────────────────────────────
+
+const INCIDENTS = {
+  incidents: [
+    {
+      id: 124, event: 124, kind: "cyber", source: "cointelegraph", title: "Binance hit by $6.3B hack", titleFr: "Binance victime d'un piratage de 6,3 Md$",
+      url: "https://cointelegraph.com/news/binance-hack", summary: "Record theft.", severity: "alert", at: "2026-10-29T10:00:00+00:00", articles: 15, usd: 6.3e9,
+      report: {
+        titre_fr: "Binance victime d'un piratage", resume_en: "Binance lost $6.3 billion.", resume_fr: "Binance a perdu 6,3 milliards de dollars.",
+        victime: "Binance", attaquants: "Attribué à TraderTraitor", methode: ["Ordinateur d'un ingénieur DevOps compromis.", "Clés des portefeuilles utilisées."],
+        impact: "6,3 Md$ volés, 3 Md$ gelés.", defense: ["Multisignature avec délai.", "Postes d'administration isolés."], lien_ia: "", fiabilite: "confirmé",
+        termes: [{ en: "hot wallet", fr: "portefeuille connecté" }],
+      },
+    },
+    { id: 179, event: 179, kind: "cyber", source: "therecord", title: "Florida data breach affects 4.9 million", titleFr: "", url: "https://therecord.media/x", summary: "Leak.", severity: "notable", at: "2026-10-30T10:00:00+00:00", articles: 2, usd: null, report: null },
+  ],
+};
+
+function withIncidents() {
+  const siteFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => (String(input).endsWith("/data/incidents.json") ? new Response(JSON.stringify(INCIDENTS)) : siteFetch(input, init));
+  return () => {
+    globalThis.fetch = siteFetch;
+  };
+}
+
+test("/cyber lists the attacks and 🔎 explains how they happened and how to defend", async () => {
+  const { env, calls } = setup();
+  const restore = withIncidents();
+  try {
+    await post(env, message("💥 Cyberattaques"));
+    const list = calls.find((call) => call.method === "sendMessage");
+    assert.match(list.body.text, /Binance victime d'un piratage de 6,3 Md\$/);
+    assert.match(list.body.text, /💸 6,3 Md\$ · 15 articles · 🔎 expliqué/);
+    assert.match(list.body.text, /⏳ en analyse/);
+    const pick = list.body.reply_markup.inline_keyboard.flat().find((button) => button.callback_data === "x:124");
+    assert.ok(pick, "a 🔎 button per incident");
+
+    calls.length = 0;
+    await post(env, callback("x:124"));
+    const explained = sentTexts(calls).join("\n");
+    for (const expected of [/🇬🇧 <i>Binance lost \$6.3 billion.<\/i>/, /🇫🇷 Binance a perdu/, /Comment ils ont procédé/, /1\. Ordinateur d'un ingénieur DevOps compromis\./, /Comment s'en protéger/, /• Multisignature avec délai\./, /<b>hot wallet<\/b> = portefeuille connecté/]) {
+      assert.match(explained, expected);
+    }
+    calls.length = 0;
+    await post(env, callback("x:179"));
+    assert.match(sentTexts(calls).join("\n"), /L'analyste prépare l'explication/);
+    calls.length = 0;
+    await post(env, callback("x:999"));
+    assert.match(sentTexts(calls).join("\n"), /pas encore traité/);
+  } finally {
+    restore();
+  }
+});
+
+test("a major cyberattack is pushed once per event, with its 'how' button", async () => {
+  const { env, calls } = setup();
+  const alert = { key: "event:124", kind: "cyber", source: "cointelegraph", title: "Binance hit by $6.3B hack", url: "https://cointelegraph.com/news/binance-hack" };
+  const first = await withNow(localTime(12, 0), () => pipeline(env, { light: true, sheets: [], alerts: [alert] }));
+  assert.equal(first.alerted, true);
+  const sent = calls.find((call) => call.method === "sendMessage");
+  assert.match(sent.body.text, /Alerte cyberattaque/);
+  assert.match(sent.body.text, /≥ 50 M\$ volés/);
+  assert.ok(sent.body.reply_markup.inline_keyboard.flat().some((button) => button.callback_data === "x:124"));
+  calls.length = 0;
+  const again = await withNow(localTime(15, 0), () => pipeline(env, { light: true, sheets: [], alerts: [{ ...alert, title: "Another article on the same hack" }] }));
+  assert.equal(again.alerted, false, "a second article about the same event is not a new alert");
 });
